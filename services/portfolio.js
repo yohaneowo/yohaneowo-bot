@@ -1,8 +1,9 @@
 const ccxt = require('ccxt');
+const crypto = require('node:crypto');
 const { EmbedBuilder } = require('discord.js');
 
 const EXCHANGE_MAP = {
-	binance: { envPrefix: 'BINANCE' },
+	binance: { envPrefix: 'BINANCE', inverseBalanceParams: { type: 'delivery' } },
 	bybit: { envPrefix: 'BYBIT' },
 	pionex: { envPrefix: 'PIONEX' },
 };
@@ -16,6 +17,26 @@ function formatCurrency(value) {
 	return Number(value).toLocaleString('en-US', {
 		minimumFractionDigits: 2,
 		maximumFractionDigits: 2,
+	});
+}
+
+function formatUsdtAndTwd(value, rate, includeRate = false) {
+	const lines = [`USDT ${formatCurrency(value)}`];
+	if (value >= 1) {
+		const rateText = includeRate ? ` (1 USDT = ${formatCurrency(rate)} TWD)` : '';
+		lines.push(`TWD ${formatCurrency(value * rate)}${rateText}`);
+	}
+	return lines.join('\n');
+}
+
+function addAssetField(embed, name, value, rate, details = []) {
+	const amount = safeNumber(value);
+	if (amount < 1) return;
+
+	embed.addFields({
+		name,
+		value: [formatUsdtAndTwd(amount, rate), ...details].join('\n'),
+		inline: false,
 	});
 }
 
@@ -47,33 +68,24 @@ function makeExchangeClient(exchangeName) {
 }
 
 async function fetchUsdtToTwdRate() {
-	const fallbackRate = 32.7;
-	const urls = [
-		'https://max-api.maicoin.com/api/v1/markets/USDTTWD/ticker',
-		'https://max-api.maicoin.com/api/v1/ticker?pair=USDT_TWD',
-		'https://max-api.maicoin.com/api/v1/markets/USDTTWD/ticker',
-	];
+	const fallbackRate = 31.809;
 
-	for (const url of urls) {
-		try {
-			if (typeof fetch !== 'function') continue;
-			const response = await fetch(url);
-			if (!response.ok) continue;
-			const data = await response.json();
-			const rate = safeNumber(
-				data?.last ??
-				data?.price ??
-				data?.ticker?.last ??
-				data?.data?.last ??
-				data?.result?.last,
-			);
-			if (rate > 0) {
-				return rate;
-			}
+	try {
+		const response = await fetch('https://max-api.maicoin.com/api/v2/tickers');
+		if (!response.ok) {
+			throw new Error(`MAX API returned HTTP ${response.status}`);
 		}
-		catch {
-			// Try the next URL if one fails.
+
+		const data = await response.json();
+		const ticker = data?.usdttwd;
+		const rate = safeNumber(ticker?.buy ?? ticker?.last ?? ticker?.sell);
+		if (rate > 0) {
+			return rate;
 		}
+		throw new Error('MAX USDT/TWD ticker is missing or invalid');
+	}
+	catch (error) {
+		console.warn(`Failed to fetch MAX USDT/TWD rate; using fallback ${fallbackRate}:`, error.message);
 	}
 
 	return fallbackRate;
@@ -92,7 +104,14 @@ async function estimateAssetValue(exchange, asset, amount) {
 		return numericAmount;
 	}
 
-	const candidates = [`${normalizedAsset}/USDT`, `${normalizedAsset}/USD`, `${normalizedAsset}/USDC`];
+	const exchangeSpecificCandidates =
+		exchange.id === 'binance' && normalizedAsset === 'EQ_MSTR' ? ['MSTRB/USDT'] : [];
+	const candidates = [
+		...exchangeSpecificCandidates,
+		`${normalizedAsset}/USDT`,
+		`${normalizedAsset}/USD`,
+		`${normalizedAsset}/USDC`,
+	];
 
 	for (const symbol of candidates) {
 		try {
@@ -146,44 +165,131 @@ async function fetchSpotPortfolio(exchangeName) {
 	};
 }
 
-async function fetchCoinWalletEquity(exchangeName) {
-	const client = makeExchangeClient(exchangeName);
+async function fetchBybitFundingPortfolio() {
+	const client = makeExchangeClient('bybit');
 	await client.loadMarkets();
 
-	const balanceCandidates = [
-		{ type: 'delivery' },
-		{ type: 'inverse' },
-		{ type: 'swap', subType: 'inverse' },
-		{ type: 'future', subType: 'inverse' },
-		{},
-	];
+	const balance = await client.fetchBalance({ type: 'funding' });
+	const holdings = [];
+	let totalValue = 0;
 
-	let wallet = null;
-	for (const params of balanceCandidates) {
-		try {
-			const candidate = await client.fetchBalance(params);
-			if (candidate && candidate.total && Object.keys(candidate.total).length > 0) {
-				wallet = candidate;
-				break;
-			}
-		}
-		catch {
-			// Try the next balance shape.
-		}
+	for (const [asset, rawTotal] of Object.entries(balance?.total ?? {})) {
+		const amount = safeNumber(rawTotal);
+		if (amount <= 0) continue;
+
+		const normalizedAsset = String(asset).toUpperCase();
+		const value = await estimateAssetValue(client, normalizedAsset, amount);
+		if (value <= 0) continue;
+
+		totalValue += value;
+		holdings.push({
+			asset: normalizedAsset,
+			amount,
+			value,
+		});
 	}
 
-	if (!wallet) {
-		return { total: 0, holdings: [] };
+	return {
+		exchange: 'bybit',
+		type: 'funding',
+		total: Number(totalValue.toFixed(2)),
+		holdings,
+		generatedAt: new Date().toISOString(),
+	};
+}
+
+async function fetchBinanceFundingPortfolio() {
+	const client = makeExchangeClient('binance');
+	await client.loadMarkets();
+
+	const balance = await client.fetchBalance({ type: 'funding' });
+	const holdings = [];
+	let totalValue = 0;
+
+	for (const [asset, rawTotal] of Object.entries(balance?.total ?? {})) {
+		const amount = safeNumber(rawTotal);
+		if (amount <= 0) continue;
+
+		const normalizedAsset = String(asset).toUpperCase();
+		const value = await estimateAssetValue(client, normalizedAsset, amount);
+		if (value <= 0) continue;
+
+		totalValue += value;
+		holdings.push({
+			asset: normalizedAsset,
+			amount,
+			value,
+		});
 	}
+
+	return {
+		exchange: 'binance',
+		type: 'funding',
+		total: Number(totalValue.toFixed(2)),
+		holdings,
+		generatedAt: new Date().toISOString(),
+	};
+}
+
+async function fetchPionexPortfolio() {
+	const apiKey = process.env.PIONEX_API_KEY;
+	const secret = process.env.PIONEX_SECRET;
+	if (!apiKey || !secret) {
+		throw new Error('PIONEX_API_KEY and PIONEX_SECRET must be configured');
+	}
+
+	const path = '/api/v1/wallet/balancesFull';
+	const query = `timestamp=${Date.now()}`;
+	const signature = crypto
+		.createHmac('sha256', secret)
+		.update(`GET${path}?${query}`)
+		.digest('hex');
+	const response = await fetch(`https://api.pionex.com${path}?${query}`, {
+		headers: {
+			'PIONEX-KEY': apiKey,
+			'PIONEX-SIGNATURE': signature,
+		},
+	});
+	if (!response.ok) {
+		throw new Error(`Pionex API returned HTTP ${response.status}`);
+	}
+
+	const payload = await response.json();
+	if (!payload?.result) {
+		throw new Error(`Pionex API error ${payload?.code ?? 'UNKNOWN'}: ${payload?.message ?? 'Request failed'}`);
+	}
+
+	const data = payload.data ?? {};
+	return {
+		exchange: 'pionex',
+		type: 'account',
+		total: safeNumber(data.totalInUsdt),
+		botAccountTotal: safeNumber(data.botAccount?.totalInUsdt),
+		traderAccountTotal: safeNumber(data.traderAccount?.totalInUsdt),
+		generatedAt: new Date().toISOString(),
+	};
+}
+
+async function fetchInverseContractWalletEquity(exchangeName) {
+	const normalizedName = String(exchangeName).toLowerCase();
+	const balanceParams = EXCHANGE_MAP[normalizedName]?.inverseBalanceParams;
+	if (!balanceParams) {
+		throw new Error(`Inverse-contract wallet balance is not configured for ${normalizedName}`);
+	}
+
+	const client = makeExchangeClient(normalizedName);
+	await client.loadMarkets();
+
+	const wallet = await client.fetchBalance(balanceParams);
 
 	const holdings = [];
 	let totalValue = 0;
+	const stableCoins = new Set(['USDT', 'USDC', 'BUSD', 'TUSD', 'FDUSD', 'DAI']);
 	for (const [asset, rawTotal] of Object.entries(wallet.total ?? {})) {
 		const amount = safeNumber(rawTotal);
 		if (!amount || amount <= 0) continue;
 
 		const normalizedAsset = String(asset).toUpperCase();
-		const stableCoins = new Set(['USDT', 'USDC', 'BUSD', 'TUSD', 'FDUSD', 'DAI']);
 		const value = stableCoins.has(normalizedAsset)
 			? amount
 			: await estimateAssetValue(client, normalizedAsset, amount);
@@ -199,8 +305,99 @@ async function fetchCoinWalletEquity(exchangeName) {
 	}
 
 	return {
-		exchange: exchangeName,
-		type: 'coin-wallet',
+		exchange: normalizedName,
+		type: 'inverse-contract-wallet',
+		total: Number(totalValue.toFixed(2)),
+		holdings,
+		generatedAt: new Date().toISOString(),
+	};
+}
+
+async function fetchBybitEarnPortfolio() {
+	const client = makeExchangeClient('bybit');
+	await client.loadMarkets();
+
+	const holdings = [];
+	let totalValue = 0;
+	for (const category of ['FlexibleSaving', 'OnChain']) {
+		try {
+			const response = await client.privateGetV5EarnPosition({ category });
+			for (const position of response?.result?.list ?? []) {
+				const amount = safeNumber(position?.amount);
+				if (amount <= 0) continue;
+
+				const asset = String(position?.coin ?? '').toUpperCase();
+				if (!asset) continue;
+
+				const value = await estimateAssetValue(client, asset, amount);
+				if (value <= 0) continue;
+
+				totalValue += value;
+				holdings.push({
+					asset,
+					amount,
+					value,
+					category,
+				});
+			}
+		}
+		catch (error) {
+			console.warn(`Bybit Earn ${category} positions unavailable:`, error.message);
+		}
+	}
+
+	return {
+		exchange: 'bybit',
+		type: 'earn',
+		total: Number(totalValue.toFixed(2)),
+		holdings,
+		generatedAt: new Date().toISOString(),
+	};
+}
+
+async function fetchBinanceEarnPortfolio() {
+	const client = makeExchangeClient('binance');
+	await client.loadMarkets();
+
+	const holdings = [];
+	let totalValue = 0;
+	const earnTypes = [
+		{ category: 'flexible', method: 'sapiGetSimpleEarnFlexiblePosition' },
+		{ category: 'locked', method: 'sapiGetSimpleEarnLockedPosition' },
+	];
+
+	for (const earnType of earnTypes) {
+		let current = 1;
+		const pageSize = 100;
+		while (true) {
+			const response = await client[earnType.method]({ current, size: pageSize });
+			const positions = response?.rows ?? [];
+			for (const position of positions) {
+				const amount = safeNumber(position?.totalAmount);
+				const asset = String(position?.asset ?? '').toUpperCase();
+				if (amount <= 0 || !asset) continue;
+
+				const value = await estimateAssetValue(client, asset, amount);
+				if (value <= 0) continue;
+
+				totalValue += value;
+				holdings.push({
+					asset,
+					amount,
+					value,
+					category: earnType.category,
+				});
+			}
+
+			const totalPositions = safeNumber(response?.total);
+			if (positions.length < pageSize || current * pageSize >= totalPositions) break;
+			current += 1;
+		}
+	}
+
+	return {
+		exchange: 'binance',
+		type: 'earn',
 		total: Number(totalValue.toFixed(2)),
 		holdings,
 		generatedAt: new Date().toISOString(),
@@ -211,17 +408,11 @@ function getFuturesPositionQueries(exchangeName) {
 	const normalizedName = String(exchangeName).toLowerCase();
 
 	if (normalizedName === 'binance') {
-		return [
-			{ type: 'usdt', params: { type: 'future', subType: 'linear' } },
-			{ type: 'coin', params: { type: 'future', subType: 'inverse' } },
-		];
+		return [{ type: 'usdt', params: { type: 'future', subType: 'linear' } }];
 	}
 
 	if (normalizedName === 'bybit') {
-		return [
-			{ type: 'usdt', params: { type: 'linear' } },
-			{ type: 'coin', params: { type: 'inverse' } },
-		];
+		return [{ type: 'usdt', params: { type: 'linear' } }];
 	}
 
 	return [{ type: 'unknown', params: {} }];
@@ -262,8 +453,6 @@ async function fetchFuturesPortfolio(exchangeName) {
 	const holdings = [];
 	let totalValue = 0;
 	let usdtMaturedValue = 0;
-	let coinMaturedValue = 0;
-	let coinExposureValue = 0;
 
 	const queries = getFuturesPositionQueries(exchangeName);
 
@@ -279,13 +468,7 @@ async function fetchFuturesPortfolio(exchangeName) {
 				if (notional <= 0) continue;
 
 				totalValue += notional;
-				if (query.type === 'coin') {
-					coinMaturedValue += notional;
-					coinExposureValue += notional;
-				}
-				else {
-					usdtMaturedValue += notional;
-				}
+				usdtMaturedValue += notional;
 
 				holdings.push({
 					asset: String(position?.symbol ?? 'UNKNOWN').toUpperCase(),
@@ -305,8 +488,6 @@ async function fetchFuturesPortfolio(exchangeName) {
 		type: 'futures',
 		total: Number(totalValue.toFixed(2)),
 		usdtTotal: Number(usdtMaturedValue.toFixed(2)),
-		coinTotal: Number(coinMaturedValue.toFixed(2)),
-		coinExposureTotal: Number(coinExposureValue.toFixed(2)),
 		holdings,
 		generatedAt: new Date().toISOString(),
 	};
@@ -320,44 +501,102 @@ async function getPortfolioSnapshot(exchangeName = 'all') {
 	let spotTotal = 0;
 	let futuresTotal = 0;
 	let futuresUsdtTotal = 0;
-	let futuresCoinTotal = 0;
-	let futuresCoinExposureTotal = 0;
-	let coinWalletTotal = 0;
+	let inverseContractWalletTotal = 0;
+	let earnTotal = 0;
+	let fundingTotal = 0;
+	let pionexTotal = 0;
+	let pionexBotAccountTotal = 0;
+	let pionexTraderAccountTotal = 0;
 
 	for (const target of targets) {
-		try {
-			const spotPortfolio = await fetchSpotPortfolio(target);
-			results.push(spotPortfolio);
-			spotTotal += spotPortfolio.total;
-		}
-		catch (error) {
-			console.warn(`Spot portfolio unavailable for ${target}:`, error.message);
+		if (target !== 'pionex') {
+			try {
+				const spotPortfolio = await fetchSpotPortfolio(target);
+				results.push(spotPortfolio);
+				spotTotal += spotPortfolio.total;
+			}
+			catch (error) {
+				console.warn(`Spot portfolio unavailable for ${target}:`, error.message);
+			}
+
+			try {
+				const futuresPortfolio = await fetchFuturesPortfolio(target);
+				results.push(futuresPortfolio);
+				futuresTotal += futuresPortfolio.total;
+				futuresUsdtTotal += futuresPortfolio.usdtTotal;
+			}
+			catch (error) {
+				console.warn(`Futures portfolio unavailable for ${target}:`, error.message);
+			}
 		}
 
-		try {
-			const futuresPortfolio = await fetchFuturesPortfolio(target);
-			results.push(futuresPortfolio);
-			futuresTotal += futuresPortfolio.total;
-			futuresUsdtTotal += futuresPortfolio.usdtTotal;
-			futuresCoinTotal += futuresPortfolio.coinTotal;
-			futuresCoinExposureTotal += futuresPortfolio.coinExposureTotal;
-		}
-		catch (error) {
-			console.warn(`Futures portfolio unavailable for ${target}:`, error.message);
+		if (target === 'pionex') {
+			try {
+				const pionexPortfolio = await fetchPionexPortfolio();
+				results.push(pionexPortfolio);
+				pionexTotal += pionexPortfolio.total;
+				pionexBotAccountTotal += pionexPortfolio.botAccountTotal;
+				pionexTraderAccountTotal += pionexPortfolio.traderAccountTotal;
+			}
+			catch (error) {
+				console.warn('Pionex account balance unavailable:', error.message);
+			}
 		}
 
-		try {
-			const coinWalletPortfolio = await fetchCoinWalletEquity(target);
-			results.push(coinWalletPortfolio);
-			coinWalletTotal += coinWalletPortfolio.total;
+		if (target === 'bybit') {
+			try {
+				const fundingPortfolio = await fetchBybitFundingPortfolio();
+				results.push(fundingPortfolio);
+				fundingTotal += fundingPortfolio.total;
+			}
+			catch (error) {
+				console.warn('Bybit Funding account unavailable:', error.message);
+			}
+
+			try {
+				const earnPortfolio = await fetchBybitEarnPortfolio();
+				results.push(earnPortfolio);
+				earnTotal += earnPortfolio.total;
+			}
+			catch (error) {
+				console.warn('Bybit Earn portfolio unavailable:', error.message);
+			}
 		}
-		catch (error) {
-			console.warn(`Coin wallet equity unavailable for ${target}:`, error.message);
+
+		if (target === 'binance') {
+			try {
+				const fundingPortfolio = await fetchBinanceFundingPortfolio();
+				results.push(fundingPortfolio);
+				fundingTotal += fundingPortfolio.total;
+			}
+			catch (error) {
+				console.warn('Binance Funding account unavailable:', error.message);
+			}
+
+			try {
+				const earnPortfolio = await fetchBinanceEarnPortfolio();
+				results.push(earnPortfolio);
+				earnTotal += earnPortfolio.total;
+			}
+			catch (error) {
+				console.warn('Binance Earn portfolio unavailable:', error.message);
+			}
+		}
+
+		if (EXCHANGE_MAP[target]?.inverseBalanceParams) {
+			try {
+				const inverseContractPortfolio = await fetchInverseContractWalletEquity(target);
+				results.push(inverseContractPortfolio);
+				inverseContractWalletTotal += inverseContractPortfolio.total;
+			}
+			catch (error) {
+				console.warn(`${target} inverse-contract wallet unavailable:`, error.message);
+			}
 		}
 	}
 
 	const twdRate = await fetchUsdtToTwdRate();
-	const totalUsdt = Number((spotTotal + futuresUsdtTotal + coinWalletTotal).toFixed(2));
+	const totalUsdt = Number((spotTotal + futuresUsdtTotal + inverseContractWalletTotal + earnTotal + fundingTotal + pionexTotal).toFixed(2));
 	const totalTwd = Number((totalUsdt * twdRate).toFixed(2));
 
 	return {
@@ -365,9 +604,12 @@ async function getPortfolioSnapshot(exchangeName = 'all') {
 		spotTotal: Number(spotTotal.toFixed(2)),
 		futuresTotal: Number(futuresTotal.toFixed(2)),
 		futuresUsdtTotal: Number(futuresUsdtTotal.toFixed(2)),
-		futuresCoinTotal: Number(futuresCoinTotal.toFixed(2)),
-		futuresCoinExposureTotal: Number(futuresCoinExposureTotal.toFixed(2)),
-		coinWalletTotal: Number(coinWalletTotal.toFixed(2)),
+		inverseContractWalletTotal: Number(inverseContractWalletTotal.toFixed(2)),
+		earnTotal: Number(earnTotal.toFixed(2)),
+		fundingTotal: Number(fundingTotal.toFixed(2)),
+		pionexTotal: Number(pionexTotal.toFixed(2)),
+		pionexBotAccountTotal: Number(pionexBotAccountTotal.toFixed(2)),
+		pionexTraderAccountTotal: Number(pionexTraderAccountTotal.toFixed(2)),
 		total: totalUsdt,
 		twdRate: Number(twdRate.toFixed(4)),
 		totalTwd: totalTwd,
@@ -375,13 +617,16 @@ async function getPortfolioSnapshot(exchangeName = 'all') {
 	};
 }
 
-function createPortfolioEmbed(snapshot, title = 'Portfolio Snapshot') {
+function createPortfolioEmbed(snapshot, title = '资产快照', avatarUrl) {
 	const embed = new EmbedBuilder()
 		.setColor(0x5865f2)
 		.setTitle(title)
 		.setDescription(
 			`Updated: ${new Date(snapshot.generatedAt).toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai' })}`,
 		);
+	if (avatarUrl) {
+		embed.setThumbnail(avatarUrl);
+	}
 
 	if (!snapshot?.exchanges?.length) {
 		return embed.addFields({
@@ -391,56 +636,19 @@ function createPortfolioEmbed(snapshot, title = 'Portfolio Snapshot') {
 		});
 	}
 
-	for (const item of snapshot.exchanges) {
-		if (!item) continue;
-		const name = `${String(item.exchange || 'Unknown').toUpperCase()} ${String(item.type || 'unknown').toUpperCase()}`;
-		const value = `USDT ${formatCurrency(item.total ?? 0)}`;
-		embed.addFields({
-			name,
-			value,
-			inline: true,
-		});
-	}
+	const twdRate = snapshot.twdRate ?? 32.7;
+	addAssetField(embed, '现货资产', snapshot.spotTotal, twdRate);
+	addAssetField(embed, '资金账户资产', snapshot.fundingTotal, twdRate);
+	addAssetField(embed, '派网机器人账户', snapshot.pionexBotAccountTotal, twdRate);
+	addAssetField(embed, '派网交易账户', snapshot.pionexTraderAccountTotal, twdRate);
+
+	addAssetField(embed, '理财资产', snapshot.earnTotal, twdRate);
+	addAssetField(embed, 'U本位合约资产', snapshot.futuresUsdtTotal, twdRate);
+	addAssetField(embed, '币本位合约资产', snapshot.inverseContractWalletTotal, twdRate);
 
 	embed.addFields({
-		name: 'SPOT TOTAL',
-		value: `USDT ${formatCurrency(snapshot.spotTotal ?? 0)}`,
-		inline: false,
-	});
-
-	embed.addFields({
-		name: 'USDT 本位合约',
-		value: `USDT ${formatCurrency(snapshot.futuresUsdtTotal ?? 0)}`,
-		inline: false,
-	});
-
-	embed.addFields({
-		name: '币本位钱包权益',
-		value: `USDT ${formatCurrency(snapshot.coinWalletTotal ?? 0)}`,
-		inline: false,
-	});
-
-	embed.addFields({
-		name: '币本位名义价值',
-		value: `USDT ${formatCurrency(snapshot.futuresCoinExposureTotal ?? 0)}`,
-		inline: false,
-	});
-
-	embed.addFields({
-		name: 'FUTURES TOTAL',
-		value: `USDT ${formatCurrency(snapshot.futuresTotal ?? 0)}`,
-		inline: false,
-	});
-
-	embed.addFields({
-		name: 'TOTAL (USDT)',
-		value: `USDT ${formatCurrency(snapshot.total ?? 0)}`,
-		inline: false,
-	});
-
-	embed.addFields({
-		name: 'TOTAL (TWD)',
-		value: `TWD ${formatCurrency(snapshot.totalTwd ?? 0)}\nRate: 1 USDT = ${formatCurrency(snapshot.twdRate ?? 32.7)} TWD`,
+		name: 'TOTAL',
+		value: formatUsdtAndTwd(snapshot.total ?? 0, twdRate, true),
 		inline: false,
 	});
 

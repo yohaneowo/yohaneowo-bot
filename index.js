@@ -5,8 +5,17 @@ const cron = require('node-cron');
 const { Client, Collection, Events, GatewayIntentBits, MessageFlags } = require('discord.js');
 const { getPortfolioSnapshot, createPortfolioEmbed } = require('./services/portfolio');
 
+const statusNotifyUserId = process.env.MASTER_ID || process.env.DISCORD_STATUS_NOTIFY_USER_ID;
+const statusNotificationCooldownMs = 3 * 60 * 60 * 1000;
+const clientIntents = [GatewayIntentBits.Guilds];
+if (statusNotifyUserId) {
+	clientIntents.push(GatewayIntentBits.GuildPresences);
+}
+
 // Create a new client instance
-const client = new Client({ intents: [GatewayIntentBits.Guilds] });
+const client = new Client({ intents: clientIntents });
+let lastStatusNotificationAt = 0;
+let isSendingStatusNotification = false;
 
 async function sendDailyPortfolioReport() {
 	const channelId = process.env.PORTFOLIO_CHANNEL_ID;
@@ -23,7 +32,11 @@ async function sendDailyPortfolioReport() {
 		}
 
 		const snapshot = await getPortfolioSnapshot('all');
-		const embed = createPortfolioEmbed(snapshot, 'Daily Portfolio Report');
+		const embed = createPortfolioEmbed(
+			snapshot,
+			'每日资产报告',
+			client.user.displayAvatarURL({ size: 256 }),
+		);
 		await channel.send({ embeds: [embed] });
 		console.log('Daily portfolio report sent.');
 	}
@@ -37,6 +50,9 @@ async function sendDailyPortfolioReport() {
 // It makes some properties non-nullable.
 client.once(Events.ClientReady, async (readyClient) => {
 	console.log(`Ready! Logged in as ${readyClient.user.tag}`);
+	if (statusNotifyUserId) {
+		console.log('Idle-to-online DM notifications are enabled.');
+	}
 
 	const cronExpression = process.env.PORTFOLIO_CRON || '0 9 * * *';
 	cron.schedule(
@@ -51,6 +67,40 @@ client.once(Events.ClientReady, async (readyClient) => {
 		await sendDailyPortfolioReport();
 	}
 });
+
+if (statusNotifyUserId) {
+	client.on(Events.PresenceUpdate, async (oldPresence, newPresence) => {
+		if (
+			newPresence?.userId !== statusNotifyUserId ||
+			oldPresence?.status !== 'idle' ||
+			newPresence.status !== 'online' ||
+			isSendingStatusNotification ||
+			Date.now() - lastStatusNotificationAt < statusNotificationCooldownMs
+		) {
+			return;
+		}
+
+		isSendingStatusNotification = true;
+		try {
+			const user = await client.users.fetch(statusNotifyUserId);
+			const snapshot = await getPortfolioSnapshot('all');
+			const embed = createPortfolioEmbed(
+				snapshot,
+				'全部资产快照',
+				user.displayAvatarURL({ size: 256 }),
+			);
+			await user.send({ embeds: [embed] });
+			lastStatusNotificationAt = Date.now();
+			console.log('Idle-to-online ALL portfolio DM sent.');
+		}
+		catch (error) {
+			console.warn('Failed to send idle-to-online DM notification:', error.message);
+		}
+		finally {
+			isSendingStatusNotification = false;
+		}
+	});
+}
 
 client.commands = new Collection();
 const foldersPath = path.join(__dirname, 'commands');

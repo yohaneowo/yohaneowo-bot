@@ -24,7 +24,17 @@ module.exports = {
 
 		try {
 			const snapshot = await getPortfolioSnapshot(exchange);
-			const embed = createPortfolioEmbed(snapshot, 'Portfolio Snapshot');
+			const titles = {
+				all: '全部资产快照',
+				binance: '币安资产快照',
+				bybit: 'Bybit 资产快照',
+				pionex: '派网资产快照',
+			};
+			const embed = createPortfolioEmbed(
+				snapshot,
+				titles[exchange] ?? '资产快照',
+				interaction.user.displayAvatarURL({ size: 256 }),
+			);
 			await interaction.editReply({ embeds: [embed] });
 		}
 		catch (error) {
