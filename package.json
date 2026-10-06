@@ -4,7 +4,9 @@
 	"main": "index.js",
 	"scripts": {
 		"start": "node --env-file=.env index.js",
+		"dev": "node --env-file=.env.dev index.js",
 		"deploy": "node --env-file=.env deploy-commands.js",
+		"deploy:dev": "node --env-file=.env.dev deploy-commands.js",
 		"format": "prettier --write .",
 		"format:check": "prettier --check .",
 		"test": "echo \"Error: no test specified\" && exit 1"

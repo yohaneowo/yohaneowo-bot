@@ -1,0 +1,10 @@
+.env
+.env.*
+config.json
+.git
+.gitignore
+.vscode
+node_modules
+npm-debug.log*
+Dockerfile
+compose.yaml

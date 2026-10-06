@@ -1,0 +1,14 @@
+services:
+    portfolio-bot:
+        build: .
+        image: yohane0w0/yohaneowo-bot:latest
+        container_name: yohaneowo-bot
+        restart: unless-stopped
+        init: true
+        env_file:
+            - .env
+        logging:
+            driver: json-file
+            options:
+                max-size: 10m
+                max-file: '3'
