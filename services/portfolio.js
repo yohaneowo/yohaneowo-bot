@@ -1,6 +1,7 @@
 const ccxt = require('ccxt');
 const crypto = require('node:crypto');
 const { EmbedBuilder } = require('discord.js');
+const { fetchFearGreedIndex, formatFearGreed } = require('./fearGreed');
 
 const EXCHANGE_MAP = {
 	binance: { envPrefix: 'BINANCE', inverseBalanceParams: { type: 'delivery' } },
@@ -595,7 +596,7 @@ async function getPortfolioSnapshot(exchangeName = 'all') {
 		}
 	}
 
-	const twdRate = await fetchUsdtToTwdRate();
+	const [twdRate, fearGreed] = await Promise.all([fetchUsdtToTwdRate(), fetchFearGreedIndex()]);
 	const totalUsdt = Number((spotTotal + futuresUsdtTotal + inverseContractWalletTotal + earnTotal + fundingTotal + pionexTotal).toFixed(2));
 	const totalTwd = Number((totalUsdt * twdRate).toFixed(2));
 
@@ -612,6 +613,7 @@ async function getPortfolioSnapshot(exchangeName = 'all') {
 		pionexTraderAccountTotal: Number(pionexTraderAccountTotal.toFixed(2)),
 		total: totalUsdt,
 		twdRate: Number(twdRate.toFixed(4)),
+		fearGreed,
 		totalTwd: totalTwd,
 		generatedAt: new Date().toISOString(),
 	};
@@ -637,6 +639,14 @@ function createPortfolioEmbed(snapshot, title = '资产快照', avatarUrl) {
 	}
 
 	const twdRate = snapshot.twdRate ?? 32.7;
+	if (snapshot.fearGreed) {
+		embed.addFields({
+			name: '恐惧贪婪指数',
+			value: formatFearGreed(snapshot.fearGreed),
+			inline: false,
+		});
+	}
+
 	addAssetField(embed, '现货资产', snapshot.spotTotal, twdRate);
 	addAssetField(embed, '资金账户资产', snapshot.fundingTotal, twdRate);
 	addAssetField(embed, '派网机器人账户', snapshot.pionexBotAccountTotal, twdRate);
