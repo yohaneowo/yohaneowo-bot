@@ -1,9 +1,22 @@
-const { fetchOpenGraph, downloadImage } = require('./openGraph');
+const { fetchVideo } = require('./video');
+const { fetchOpenGraph, downloadImage, PREVIEW_NOTE } = require('./openGraph');
 
 const IMAGE_URL_PATTERN = /^https:\/\/[\w.-]+\.(?:fbcdn\.net|fbsbx\.com)\//i;
 
-// Fetches a public Facebook post's author, text and first image into dir.
-async function fetchFacebookPost(url, dir, maxBytes, onStage) {
+// Video posts and reels: yt-dlp gets the video. Its title is engagement stats
+// ("51K views · 501 reactions | ..."), so the text comes from description instead.
+async function fetchFacebookVideo(url, dir, maxBytes, onStage) {
+	const video = await fetchVideo(url, dir, maxBytes, onStage);
+	const { uploader, description } = video.info;
+	return {
+		...video,
+		author: uploader ?? '',
+		text: description ?? '',
+	};
+}
+
+// Photo/text posts: the link preview gives the author, text and first image.
+async function fetchFacebookPreview(url, dir, maxBytes, onStage) {
 	const meta = await fetchOpenGraph(url);
 	const author = meta['og:title'] ?? '';
 	const text = meta['og:description'] ?? '';
@@ -20,8 +33,22 @@ async function fetchFacebookPost(url, dir, maxBytes, onStage) {
 		files: image ? [image] : [],
 		author,
 		text,
+		note: PREVIEW_NOTE,
 		compressed: false,
 	};
+}
+
+// Try the video first (any post may contain one); photo posts make yt-dlp fail quickly,
+// and fall back to the link preview.
+async function fetchFacebookPost(url, dir, maxBytes, onStage) {
+	try {
+		return await fetchFacebookVideo(url, dir, maxBytes, onStage);
+	}
+	catch (error) {
+		if (error.code === 'VIDEO_TOO_LONG') throw error;
+		console.warn(`Facebook video unavailable (${error.message}); falling back to link preview.`);
+	}
+	return fetchFacebookPreview(url, dir, maxBytes, onStage);
 }
 
 module.exports = {

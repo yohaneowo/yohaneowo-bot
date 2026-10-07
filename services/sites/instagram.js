@@ -1,5 +1,5 @@
 const { fetchVideo } = require('./video');
-const { fetchOpenGraph, downloadImage } = require('./openGraph');
+const { fetchOpenGraph, downloadImage, PREVIEW_NOTE } = require('./openGraph');
 
 const IMAGE_URL_PATTERN = /^https:\/\/[\w.-]+\.(?:cdninstagram\.com|fbcdn\.net)\//i;
 
@@ -52,7 +52,7 @@ async function fetchInstagramPost(url, dir, maxBytes, onStage) {
 		files: image ? [image] : [],
 		author,
 		text,
-		note: '无法下载影片，只显示封面',
+		note: PREVIEW_NOTE,
 		compressed: false,
 	};
 }

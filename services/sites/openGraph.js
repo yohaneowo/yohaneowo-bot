@@ -7,6 +7,9 @@ const CRAWLER_USER_AGENT = 'Mozilla/5.0 (compatible; Discordbot/2.0; +https://di
 const REQUEST_TIMEOUT_MS = 15 * 1000;
 const IMAGE_EXTENSIONS = { 'image/jpeg': 'jpg', 'image/png': 'png', 'image/webp': 'webp', 'image/gif': 'gif' };
 
+// Shown under posts built from link-preview data, so readers know it is not the full post.
+const PREVIEW_NOTE = '无法取得完整内容，只显示预览';
+
 function decodeHtmlEntities(text) {
 	return text
 		.replace(/&#x([0-9a-f]+);/gi, (_, hex) => String.fromCodePoint(parseInt(hex, 16)))
@@ -66,6 +69,7 @@ async function downloadImage(imageUrl, allowedUrlPattern, dir, maxBytes) {
 }
 
 module.exports = {
+	PREVIEW_NOTE,
 	fetchOpenGraph,
 	downloadImage,
 };
