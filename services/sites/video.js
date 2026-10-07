@@ -2,24 +2,39 @@ const fs = require('node:fs/promises');
 const path = require('node:path');
 const { execFile, spawn } = require('node:child_process');
 const { promisify } = require('node:util');
+const { UserFacingError } = require('./errors');
 
 const execFileAsync = promisify(execFile);
 
 const YTDLP_PATH = process.env.YTDLP_PATH || 'yt-dlp';
 const FFMPEG_PATH = process.env.FFMPEG_PATH || 'ffmpeg';
+const FFPROBE_PATH = process.env.FFPROBE_PATH || 'ffprobe';
 const DOWNLOAD_TIMEOUT_MS = 2 * 60 * 1000;
 const COMPRESS_TIMEOUT_MS = 5 * 60 * 1000;
-const MIN_VIDEO_KBPS = 300;
+// Below this a compressed 720p video is too blurry to be worth posting; skip it instead.
+// With a 10 MB limit that is roughly 90 seconds, with 50 MB about 7 minutes.
+const MIN_VIDEO_KBPS = 700;
 const AUDIO_KBPS = 96;
 
-// Prefer H.264 (plays inline everywhere in Discord), then the highest resolution that fits.
+// Leaves room for the separate audio track when picking a video-only stream to merge.
+const AUDIO_ALLOWANCE_BYTES = 2 * 1000 * 1000;
+
+// Prefer a single H.264 file (plays inline everywhere in Discord) at the highest resolution that
+// fits. Sites without combined files (YouTube) get H.264 video + m4a audio merged by ffmpeg.
+// Last resort is the best available, compressed afterwards if too large.
 function buildFormatSelector(maxBytes) {
+	const videoBytes = Math.max(maxBytes - AUDIO_ALLOWANCE_BYTES, 1);
+	const h264 = '[vcodec~=\'^(h264|avc1)\']';
 	return [
-		`b[vcodec^=h264][filesize<${maxBytes}]`,
-		`b[vcodec^=h264][filesize_approx<${maxBytes}]`,
+		`b${h264}[filesize<${maxBytes}]`,
+		`b${h264}[filesize_approx<${maxBytes}]`,
 		`b[filesize<${maxBytes}]`,
 		`b[filesize_approx<${maxBytes}]`,
+		`bv*${h264}[filesize<${videoBytes}]+ba[ext=m4a]`,
+		`bv*${h264}[filesize_approx<${videoBytes}]+ba[ext=m4a]`,
 		'b',
+		`bv*${h264}+ba[ext=m4a]`,
+		'bv*+ba',
 	].join('/');
 }
 
@@ -68,6 +83,16 @@ async function findDownloadedFile(dir) {
 	return path.join(dir, video);
 }
 
+// Some sites (e.g. Instagram) report no duration, so read it from the downloaded file.
+async function probeDuration(filePath) {
+	const { stdout } = await execFileAsync(
+		FFPROBE_PATH,
+		['-v', 'error', '-show_entries', 'format=duration', '-of', 'csv=p=0', filePath],
+		{ timeout: 30 * 1000 },
+	);
+	return Number(stdout.trim());
+}
+
 async function compressToFit(inputPath, outputPath, durationSeconds, maxBytes) {
 	if (!(durationSeconds > 0)) {
 		throw new Error('Video is too large and its duration is unknown, cannot compress');
@@ -78,7 +103,10 @@ async function compressToFit(inputPath, outputPath, durationSeconds, maxBytes) {
 	// The encoder can overshoot the target bitrate, so retry with a proportionally lower one.
 	for (let attempt = 0; attempt < 3; attempt++) {
 		if (videoKbps < MIN_VIDEO_KBPS) {
-			throw new Error('Video is too long to fit within the Discord upload limit');
+			// media.js rewrites this with the site name ("建议直接到 TikTok 观看").
+			throw Object.assign(new UserFacingError('影片太长，压缩后会太糊，建议直接到原网站观看'), {
+				code: 'VIDEO_TOO_LONG',
+			});
 		}
 
 		await execFileAsync(
@@ -109,6 +137,20 @@ async function compressToFit(inputPath, outputPath, durationSeconds, maxBytes) {
 	throw new Error('Compressed video still exceeds the Discord upload limit');
 }
 
+// Compresses a downloaded video when it exceeds maxBytes. Duration comes from the site when
+// known, otherwise from the file itself.
+async function fitVideoToLimit(filePath, dir, maxBytes, onStage, knownDuration) {
+	const { size } = await fs.stat(filePath);
+	if (size <= maxBytes) {
+		return { filePath, compressed: false };
+	}
+
+	onStage?.('compressing');
+	const duration = knownDuration > 0 ? knownDuration : await probeDuration(filePath);
+	const compressedPath = await compressToFit(filePath, path.join(dir, 'compressed.mp4'), duration, maxBytes);
+	return { filePath: compressedPath, compressed: true };
+}
+
 // Downloads a video with yt-dlp into dir, compressing it when it exceeds maxBytes.
 // onStage is called with 'downloading' and (if needed) 'compressing' as the work progresses.
 async function fetchVideo(url, dir, maxBytes, onStage) {
@@ -120,6 +162,10 @@ async function fetchVideo(url, dir, maxBytes, onStage) {
 			'--no-simulate',
 			'-f', buildFormatSelector(maxBytes),
 			'-S', 'res,br',
+			'--merge-output-format', 'mp4',
+			// YouTube needs a JS runtime; reuse the Node binary running this bot.
+			'--js-runtimes', `node:${process.execPath}`,
+			...(process.env.FFMPEG_PATH ? ['--ffmpeg-location', FFMPEG_PATH] : []),
 			'-o', path.join(dir, 'video.%(ext)s'),
 			'--',
 			url,
@@ -128,14 +174,7 @@ async function fetchVideo(url, dir, maxBytes, onStage) {
 	);
 	const info = JSON.parse(stdout.trim().split('\n').pop());
 
-	let filePath = await findDownloadedFile(dir);
-	let compressed = false;
-	const { size } = await fs.stat(filePath);
-	if (size > maxBytes) {
-		onStage?.('compressing');
-		filePath = await compressToFit(filePath, path.join(dir, 'compressed.mp4'), info.duration, maxBytes);
-		compressed = true;
-	}
+	const { filePath, compressed } = await fitVideoToLimit(await findDownloadedFile(dir), dir, maxBytes, onStage, info.duration);
 
 	const uploader = info.uploader || info.creator || '';
 	return {
@@ -143,9 +182,18 @@ async function fetchVideo(url, dir, maxBytes, onStage) {
 		author: uploader ? `@${uploader}` : '',
 		text: info.title || info.description || '',
 		compressed,
+		// Raw yt-dlp metadata, for sites whose fields map differently (see instagram.js).
+		info: {
+			uploader: info.uploader,
+			uploaderId: info.uploader_id,
+			channel: info.channel,
+			title: info.title,
+			description: info.description,
+		},
 	};
 }
 
 module.exports = {
 	fetchVideo,
+	fitVideoToLimit,
 };

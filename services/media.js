@@ -3,10 +3,14 @@ const os = require('node:os');
 const path = require('node:path');
 const { fetchVideo } = require('./sites/video');
 const { fetchFacebookPost } = require('./sites/facebook');
+const { fetchInstagramPost } = require('./sites/instagram');
+const { fetchXiaohongshuNote } = require('./sites/xiaohongshu');
+const { fetchYouTubeShort } = require('./sites/youtube');
 
 // Sites the bot will fetch from, each with its own fetcher. Add a site by adding an entry.
 // Only listed sites are accepted so arbitrary URLs (e.g. LAN addresses) are never requested.
-// A fetcher receives (url, dir, maxBytes, onStage) and returns { files, author, text, compressed }.
+// A fetcher receives (url, dir, maxBytes, onStage) and returns
+// { files, author, text, compressed, note? } — note is an optional line shown under the post.
 const SUPPORTED_SITES = [
 	{
 		name: 'TikTok',
@@ -19,6 +23,22 @@ const SUPPORTED_SITES = [
 		pattern:
 			/^https?:\/\/(?:(?:(?:www|m|web|mbasic)\.)?facebook\.com\/(?:share\/(?:[prv]\/)?[\w-]+|[\w.-]+\/posts\/|groups\/[\w.-]+\/(?:posts|permalink)\/|permalink\.php\?|story\.php\?|photo(?:\.php)?\/?\?|[\w.-]+\/photos\/|reel\/\d+|watch\/?\?|[\w.-]+\/videos\/)|fb\.watch\/[\w-]+)/i,
 		fetch: fetchFacebookPost,
+	},
+	{
+		name: 'Instagram',
+		pattern: /^https?:\/\/(?:www\.)?instagram\.com\/(?:[\w.]+\/)?(?:reels?|p|tv)\/[\w-]+|^https?:\/\/(?:www\.)?instagram\.com\/share\/(?:reel\/|p\/)?[\w-]+/i,
+		fetch: fetchInstagramPost,
+	},
+	{
+		name: '小红书',
+		pattern: /^https?:\/\/(?:xhslink\.com\/(?:[a-z]\/)?\w+|(?:www\.)?xiaohongshu\.com\/(?:explore|discovery\/item)\/[\da-f]+)/i,
+		fetch: fetchXiaohongshuNote,
+	},
+	{
+		name: 'YouTube',
+		// Shorts only; regular videos are too long to post.
+		pattern: /^https?:\/\/(?:(?:www|m)\.)?youtube\.com\/shorts\/[\w-]{11}/i,
+		fetch: fetchYouTubeShort,
 	},
 ];
 
@@ -60,6 +80,11 @@ async function downloadMedia(url, maxBytes, onStage) {
 	}
 	catch (error) {
 		await cleanup();
+		if (error.code === 'VIDEO_TOO_LONG') {
+			// Space out Latin names ("到 TikTok 观看") but not Chinese ones ("到小红书观看").
+			const name = /^[\x20-\x7e]+$/.test(site.name) ? ` ${site.name} ` : site.name;
+			error.userMessage = `影片太长，压缩后会太糊，建议直接到${name}观看`;
+		}
 		throw error;
 	}
 }

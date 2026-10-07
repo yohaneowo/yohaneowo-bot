@@ -35,7 +35,8 @@ function mediaUrl(urlPath) {
 // and a link here would only add another preview.
 function formatText(media) {
 	const text = media.text.length > MAX_TEXT_LENGTH ? `${media.text.slice(0, MAX_TEXT_LENGTH)}…` : media.text;
-	return [media.author, text].filter(Boolean).join('\n') || media.site;
+	const body = [media.author, text].filter(Boolean).join('\n') || media.site;
+	return media.note ? `${body}\n（${media.note}）` : body;
 }
 
 // Downloads one link and turns it into LINE messages (author/text plus video/image).
@@ -113,7 +114,7 @@ async function handleEvent(event) {
 			}
 			catch (error) {
 				console.warn(`LINE media fetch failed for ${url}:`, error.message);
-				messages.push({ type: 'text', text: '❌ 解析失败了 😢' });
+				messages.push({ type: 'text', text: error.userMessage ? `⚠️ ${error.userMessage}` : '❌ 解析失败了 😢' });
 			}
 		}
 		// A single reply carries at most 5 messages.

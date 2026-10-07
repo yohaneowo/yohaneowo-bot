@@ -12,8 +12,17 @@
   |---|---|---|
   | TikTok | 影片（优先选上传上限内画质最高的 H.264，超过上限就压缩） | yt-dlp |
   | Facebook | 公开贴文的作者、内文和第一张图 | 链接预览资料，不需要登录 |
+  | Instagram | 公开的 reel 和影片贴文下载影片；受限内容只显示封面、作者和内文 | 先用 yt-dlp，失败时改用链接预览资料 |
+  | 小红书 | 影片笔记（720p，超过上限就压缩）；图文笔记回复"暂未开放" | [XHS-Downloader](https://github.com/JoeanAmier/XHS-Downloader) 的 API |
+  | YouTube | 只支持 Shorts（`youtube.com/shorts/…`），影像和声音分开下载再合并，最高 1080p | yt-dlp（用 Node 作为 JS 执行环境） |
+
+  需要压缩的影片，如果压缩后的视频码率会低于 700 kbps（10 MB 上限下大约 90 秒），就不发送，改为回复"影片太长，建议直接到原网站观看"。原片本来就在上限以内的影片不受影响。
 
   Facebook 的限制：拿不到影片文件（影片贴文只能显示封面），多图贴文只能拿到第一张，私人或仅好友可见的贴文会解析失败。
+
+  Instagram 的限制：有年龄或受众限制的内容需要登录才能看，bot 不登录，所以只显示封面并标注"无法下载影片"。Instagram 对未登录的请求有频率限制，短时间内解析太多会被暂时挡住。
+
+  小红书：App 分享出来的链接没有 `xsec_token`，网页版和 yt-dlp 都会被导到登录页。所以另外跑一个 XHS-Downloader 服务来取得笔记资料。它不需要登录，但没有 cookie 时影片只有 720p。NAS 上由 `compose.nas.yaml` 启动，开发时由 `npm run dev` 启动。
 
   支持的网站列在 `services/media.js` 的 `SUPPORTED_SITES`，每个网站在 `services/sites/` 里有自己的处理函数。
 
@@ -146,6 +155,8 @@ tunnel 有两种模式，由 `.env.dev` 决定：
 | `LINE_PORT` | | 默认 `8787`（Windows 会保留 3000 附近的端口） |
 | `LINE_PUSH_FALLBACK` | | 默认开启；设为 `false` 时，reply 超时就放弃，不改用 push |
 | `LINE_MEDIA_DIR` | | 存放对外文件的目录，默认在系统暂存目录下 |
+| `XHS_API_URL` | | XHS-Downloader 的网址。NAS 的 compose 已经设好；开发时不设的话，`npm run dev` 会自动启动一个 |
+| `FFPROBE_PATH` | | 默认使用 PATH 里的 `ffprobe`，用来读取影片长度 |
 | `CLOUDFLARE_TUNNEL_TOKEN` | NAS | `compose.nas.yaml` 里的 cloudflared 会用到 |
 
 > 测试版的 `PORTFOLIO_CHANNEL_ID` 和 `MASTER_ID` 建议留空或改成测试用的值，否则两个 bot 会重复发送日报和私信。
@@ -173,5 +184,5 @@ docker compose build
 docker compose push
 ```
 
-NAS 上使用 `compose.nas.yaml`，它只拉镜像，不会构建。里面包含 Discord bot、LINE bot 和 cloudflared 三个服务。把它和 `.env` 放在同一个文件夹，拉取新镜像后重启容器即可。
+NAS 上使用 `compose.nas.yaml`，它只拉镜像，不会构建。里面包含 Discord bot、LINE bot、cloudflared 和 XHS-Downloader 四个服务。把它和 `.env` 放在同一个文件夹，拉取新镜像后重启容器即可。
 注册稳定版的 slash 命令：`npm run deploy`。

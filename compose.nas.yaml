@@ -9,6 +9,8 @@ services:
         init: true
         env_file:
             - .env
+        environment: &xhs_env
+            XHS_API_URL: http://xhs-downloader:5556
         logging: &logging
             driver: json-file
             options:
@@ -24,6 +26,16 @@ services:
         command: ['node', 'line.js']
         env_file:
             - .env
+        environment: *xhs_env
+        logging: *logging
+
+    # Xiaohongshu note lookups (https://github.com/JoeanAmier/XHS-Downloader). Internal only:
+    # no published ports, the bots reach it as http://xhs-downloader:5556.
+    xhs-downloader:
+        image: joeanamier/xhs-downloader:latest
+        container_name: yohaneowo-xhs-downloader
+        restart: unless-stopped
+        command: ['python', 'main.py', 'api']
         logging: *logging
 
     # Public hostname (e.g. line.yohaneowo.com) -> http://line-bot:8787, configured in Cloudflare Zero Trust.

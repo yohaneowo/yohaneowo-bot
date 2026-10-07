@@ -38,6 +38,7 @@ function formatCaption(media, url, sharerId) {
 		media.author ? `**${media.author}**` : null,
 		text || null,
 		media.compressed ? '-# 原片超过上传上限，已压缩' : null,
+		media.note ? `-# ${media.note}` : null,
 	]
 		.filter(Boolean)
 		.join('\n');
@@ -76,7 +77,7 @@ async function postMedia({ url, maxBytes, sharerId, update }) {
 	catch (error) {
 		console.warn(`Media download failed for ${url}:`, error.message);
 		await pendingEdit;
-		await setStatus('❌ 解析失败了 😢');
+		await setStatus(error.userMessage ? `⚠️ ${error.userMessage}` : '❌ 解析失败了 😢');
 		return false;
 	}
 	finally {

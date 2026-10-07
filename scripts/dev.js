@@ -7,6 +7,8 @@
 // - Otherwise: a throwaway quick tunnel; its random https://*.trycloudflare.com URL becomes
 //   LINE_PUBLIC_URL for this run.
 //
+// Unless XHS_API_URL is set, it also runs XHS-Downloader (Xiaohongshu lookups) on :5556.
+//
 // Ctrl+C stops everything. `npm run dev -- --line-only` skips the Discord bot.
 const { spawn, execFileSync } = require('node:child_process');
 const path = require('node:path');
@@ -16,6 +18,8 @@ const ROOT = path.join(__dirname, '..');
 const ENV_FILE = '.env.dev';
 const LINE_PORT = 8787;
 const TUNNEL_CONTAINER = 'yohaneowo-dev-tunnel';
+const XHS_CONTAINER = 'yohaneowo-dev-xhs';
+const XHS_PORT = 5556;
 const QUICK_TUNNEL_URL_PATTERN = /https:\/\/[a-z0-9-]+\.trycloudflare\.com/;
 const NAMED_TUNNEL_READY_PATTERN = /Registered tunnel connection/;
 
@@ -52,9 +56,11 @@ function start(name, command, args, { env, onLine } = {}) {
 	return child;
 }
 
-function removeTunnelContainer() {
+const startedContainers = new Set();
+
+function removeContainer(name) {
 	try {
-		execFileSync('docker', ['rm', '-f', TUNNEL_CONTAINER], { stdio: 'ignore' });
+		execFileSync('docker', ['rm', '-f', name], { stdio: 'ignore' });
 	}
 	catch {
 		// Container not running.
@@ -65,7 +71,7 @@ function shutdown(code = 0) {
 	if (shuttingDown) return;
 	shuttingDown = true;
 	for (const child of children) child.kill();
-	if (lineEnabled) removeTunnelContainer();
+	for (const name of startedContainers) removeContainer(name);
 	process.exit(code);
 }
 
@@ -74,7 +80,8 @@ process.on('SIGTERM', () => shutdown(0));
 
 // Resolves with the public URL once the tunnel is up.
 function startTunnel() {
-	removeTunnelContainer();
+	removeContainer(TUNNEL_CONTAINER);
+	startedContainers.add(TUNNEL_CONTAINER);
 	const tunnelArgs = tunnelToken
 		? ['tunnel', '--no-autoupdate', 'run']
 		: ['tunnel', '--no-autoupdate', '--url', `http://host.docker.internal:${LINE_PORT}`];
@@ -126,7 +133,22 @@ async function setLineWebhook(publicUrl) {
 	console.warn(`[dev] Could not verify ${endpoint}; check the tunnel and the LINE console.`);
 }
 
+function startXhsDownloader() {
+	removeContainer(XHS_CONTAINER);
+	startedContainers.add(XHS_CONTAINER);
+	start('xhs', 'docker', [
+		'run', '--rm', '--name', XHS_CONTAINER, '-p', `${XHS_PORT}:5556`,
+		'joeanamier/xhs-downloader:latest', 'python', 'main.py', 'api',
+	]);
+	// Children inherit process.env, so the bots pick this up.
+	process.env.XHS_API_URL = `http://localhost:${XHS_PORT}`;
+}
+
 async function main() {
+	if (!process.env.XHS_API_URL) {
+		startXhsDownloader();
+	}
+
 	if (!lineOnly) {
 		start('dc', process.execPath, [`--env-file=${ENV_FILE}`, 'index.js']);
 	}
