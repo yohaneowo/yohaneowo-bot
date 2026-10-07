@@ -2,6 +2,7 @@ const ccxt = require('ccxt');
 const crypto = require('node:crypto');
 const { EmbedBuilder } = require('discord.js');
 const { fetchFearGreedIndex, formatFearGreed } = require('./fearGreed');
+const { fetchMstrMnav, formatMstrMnav } = require('./mstr');
 
 const EXCHANGE_MAP = {
 	binance: { envPrefix: 'BINANCE', inverseBalanceParams: { type: 'delivery' } },
@@ -596,7 +597,11 @@ async function getPortfolioSnapshot(exchangeName = 'all') {
 		}
 	}
 
-	const [twdRate, fearGreed] = await Promise.all([fetchUsdtToTwdRate(), fetchFearGreedIndex()]);
+	const [twdRate, fearGreed, mstrMnav] = await Promise.all([
+		fetchUsdtToTwdRate(),
+		fetchFearGreedIndex(),
+		fetchMstrMnav(),
+	]);
 	const totalUsdt = Number((spotTotal + futuresUsdtTotal + inverseContractWalletTotal + earnTotal + fundingTotal + pionexTotal).toFixed(2));
 	const totalTwd = Number((totalUsdt * twdRate).toFixed(2));
 
@@ -614,6 +619,7 @@ async function getPortfolioSnapshot(exchangeName = 'all') {
 		total: totalUsdt,
 		twdRate: Number(twdRate.toFixed(4)),
 		fearGreed,
+		mstrMnav,
 		totalTwd: totalTwd,
 		generatedAt: new Date().toISOString(),
 	};
@@ -643,6 +649,13 @@ function createPortfolioEmbed(snapshot, title = '资产快照', avatarUrl) {
 		embed.addFields({
 			name: '恐惧贪婪指数',
 			value: formatFearGreed(snapshot.fearGreed),
+			inline: false,
+		});
+	}
+	if (snapshot.mstrMnav) {
+		embed.addFields({
+			name: 'MSTR mNAV（普通股·扣除优先求偿）',
+			value: formatMstrMnav(snapshot.mstrMnav),
 			inline: false,
 		});
 	}
