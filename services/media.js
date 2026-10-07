@@ -6,6 +6,7 @@ const { fetchFacebookPost } = require('./sites/facebook');
 const { fetchInstagramPost } = require('./sites/instagram');
 const { fetchXiaohongshuNote } = require('./sites/xiaohongshu');
 const { fetchYouTubeShort } = require('./sites/youtube');
+const { fetchThreadsPost } = require('./sites/threads');
 
 // Sites the bot will fetch from, each with its own fetcher. Add a site by adding an entry.
 // Only listed sites are accepted so arbitrary URLs (e.g. LAN addresses) are never requested.
@@ -39,6 +40,11 @@ const SUPPORTED_SITES = [
 		// Shorts only; regular videos are too long to post.
 		pattern: /^https?:\/\/(?:(?:www|m)\.)?youtube\.com\/shorts\/[\w-]{11}/i,
 		fetch: fetchYouTubeShort,
+	},
+	{
+		name: 'Threads',
+		pattern: /^https?:\/\/(?:www\.)?threads\.(?:com|net)\/(?:@[\w.]+\/post\/[\w-]+|share\/[\w-]+)/i,
+		fetch: fetchThreadsPost,
 	},
 ];
 
