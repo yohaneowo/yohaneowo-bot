@@ -13,17 +13,35 @@ const COMPRESS_TIMEOUT_MS = 5 * 60 * 1000;
 const MIN_VIDEO_KBPS = 300;
 const AUDIO_KBPS = 96;
 
-const TIKTOK_URL_PATTERN =
-	/https?:\/\/(?:(?:www|m)\.)?(?:tiktok\.com\/(?:@[\w.-]+\/video\/\d+|t\/[\w-]+|v\/\d+)|(?:vm|vt)\.tiktok\.com\/[\w-]+)\/?/gi;
+// Sites the bot will download from. Add a site by adding an entry; yt-dlp handles the rest.
+// Only listed sites are accepted so arbitrary URLs (e.g. LAN addresses) never reach yt-dlp.
+const SUPPORTED_SITES = [
+	{
+		name: 'TikTok',
+		pattern:
+			/^https?:\/\/(?:(?:(?:www|m)\.)?tiktok\.com\/(?:@[\w.-]+\/video\/\d+|t\/[\w-]+|v\/\d+)|(?:vm|vt)\.tiktok\.com\/[\w-]+)/i,
+	},
+];
 
-function extractTikTokUrls(text) {
-	return [...new Set(String(text ?? '').match(TIKTOK_URL_PATTERN) ?? [])];
+const URL_TOKEN_PATTERN = /https?:\/\/[^\s<>]+/gi;
+
+function findSupportedSite(url) {
+	return SUPPORTED_SITES.find((site) => site.pattern.test(url)) ?? null;
 }
 
-// True when the text is nothing but TikTok links (query strings included), so deleting it loses nothing.
-function isOnlyTikTokUrls(text) {
-	const withoutUrls = String(text ?? '').replace(new RegExp(`${TIKTOK_URL_PATTERN.source}\\S*`, 'gi'), '');
-	return withoutUrls.trim() === '' && extractTikTokUrls(text).length > 0;
+function extractMediaUrls(text) {
+	const urls = String(text ?? '').match(URL_TOKEN_PATTERN) ?? [];
+	return [...new Set(urls.filter((url) => findSupportedSite(url)))];
+}
+
+// True when the text is nothing but supported links (an optional <...> wrapper included),
+// so deleting the message loses nothing.
+function isOnlyMediaUrls(text) {
+	const tokens = String(text ?? '')
+		.split(/\s+/)
+		.filter(Boolean)
+		.map((token) => token.replace(/^<(.*)>$/, '$1'));
+	return tokens.length > 0 && tokens.every((token) => findSupportedSite(token));
 }
 
 // Prefer H.264 (plays inline everywhere in Discord), then the highest resolution that fits.
@@ -123,10 +141,14 @@ async function compressToFit(inputPath, outputPath, durationSeconds, maxBytes) {
 	throw new Error('Compressed video still exceeds the Discord upload limit');
 }
 
-// Downloads a TikTok video into a fresh temp dir. Caller must call cleanup() when done.
+// Downloads a video into a fresh temp dir. Caller must call cleanup() when done.
 // onStage is called with 'downloading' and (if needed) 'compressing' as the work progresses.
-async function downloadTikTok(url, maxBytes, onStage) {
-	const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'tiktok-'));
+async function downloadMedia(url, maxBytes, onStage) {
+	if (!findSupportedSite(url)) {
+		throw new Error(`Unsupported URL: ${url}`);
+	}
+
+	const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'media-'));
 	const cleanup = () => fs.rm(dir, { recursive: true, force: true });
 
 	try {
@@ -173,7 +195,9 @@ async function downloadTikTok(url, maxBytes, onStage) {
 }
 
 module.exports = {
-	extractTikTokUrls,
-	isOnlyTikTokUrls,
-	downloadTikTok,
+	SUPPORTED_SITES,
+	findSupportedSite,
+	extractMediaUrls,
+	isOnlyMediaUrls,
+	downloadMedia,
 };

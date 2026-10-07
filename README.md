@@ -4,7 +4,11 @@
 
 - **资产报告**：汇总 Binance、Bybit、Pionex 的资产，附带恐惧贪婪指数和 MSTR mNAV。可以用 `/portfolio` 查询，也会每天定时发送日报。
 - **上线私信**：从闲置变成在线时，私信一份资产快照（冷却 3 小时）。
-- **TikTok 下载**：在群里或私信贴 TikTok 链接，bot 会自动下载并上传影片。
+- **影片解析**（目前支持 TikTok）：
+  - 在 bot 所在的服务器或 bot 私信里贴链接，自动下载并上传影片。
+  - 在任何地方（包括和朋友的私信）右键消息 →「应用 → 解析链接」，或输入 `/x url:<链接>`。
+
+  支持的网站列在 `services/media.js` 的 `SUPPORTED_SITES`，加一行规则就能支持新网站。
 
 ## Discord 设置
 
@@ -14,8 +18,10 @@
 |---|---|---|---|
 | Guilds | 否 | 一直需要 | slash 命令、频道 |
 | **Presence Intent** | ✅ | 设置了 `MASTER_ID` | 检测闲置 → 在线，触发私信 |
-| **Message Content Intent** | ✅ | `TIKTOK_DOWNLOAD=true` | 读取消息中的 TikTok 链接 |
-| Guild Messages / Direct Messages | 否 | `TIKTOK_DOWNLOAD=true` | 接收群组与私信的消息事件 |
+| **Message Content Intent** | ✅ | `MEDIA_AUTO_DOWNLOAD=true` | 读取消息中的影片链接 |
+| Guild Messages / Direct Messages | 否 | `MEDIA_AUTO_DOWNLOAD=true` | 接收群组与私信的消息事件 |
+
+`/x` 和「解析链接」不需要任何特权 intent，只有自动解析需要。
 
 > 只有带 ✅ 的特权 intent 需要在 Portal 手动打开，其他由代码自动申请。
 > 代码申请了特权 intent 但 Portal 没打开时，bot 会以 `Used disallowed intents` 登录失败。
@@ -26,11 +32,11 @@
 | 权限 | 用途 |
 |---|---|
 | 查看频道 | 读取频道、发送日报 |
-| 发送消息 | 日报、TikTok 回复 |
+| 发送消息 | 日报、影片回复 |
 | 嵌入链接 | 资产报告的 Embed |
-| 附加文件 | 上传 TikTok 影片 |
+| 附加文件 | 上传影片 |
 | 阅读消息历史 | 回复（reply）原消息 |
-| 管理消息 | 可选：TikTok 上传成功后删除原链接消息；没有这个权限时只是不删除 |
+| 管理消息 | 可选：自动解析成功后删除原链接消息；没有这个权限时只是不删除 |
 
 权限在服务器里设置，不需要回 Developer Portal。bot 已经在服务器里的话，直接修改它的身份组即可。
 
@@ -44,9 +50,20 @@ https://discord.com/oauth2/authorize?client_id=<CLIENT_ID>&scope=bot+application
 
 `125952` 包含上表全部权限。不需要删除原链接的话，用 `117760`（不含管理消息）。
 
+### 用户安装（在和朋友的私信里使用）
+
+bot 无法读取两个用户之间的私信，所以那里只能由你主动触发，没办法自动解析。
+
+1. 在 Developer Portal 打开 **Installation** 页面，在 Installation Contexts 勾选 **User Install**，并在 Default Install Settings 的 User Install 里加入 `applications.commands` scope。
+2. 用 Installation 页面上的链接安装，选择「添加到我的应用」。
+3. 执行 `npm run deploy`（或 `deploy:dev`）。`/x` 和「解析链接」会注册成**全局命令**，`/portfolio` 等命令仍然只注册到 `GUILD_ID`。
+4. 在私信里右键含链接的消息，选择「应用 → 解析链接」，或输入 `/x`。回复双方都看得到。
+
+> Developer Portal → Bot 里的 **Public Bot** 建议关闭。否则任何人都能安装这个 app，并用你的 NAS 下载影片。
+
 ### 其他限制
 
-- 私信里 bot 无法删除用户的消息，这是 Discord 的限制，所以私信里贴链接只会回复影片。
+- 私信里 bot 无法删除用户的消息，这是 Discord 的限制，所以在私信里只会回复影片，不会删除原链接。
 - 上线私信要求 bot 与你在同一个服务器里，而且你允许接收该服务器成员的私信。
 - bot 上传文件的上限跟随服务器加成等级：未加成或私信为 10 MB，2 级 50 MB，3 级 100 MB。超过上限的影片会自动压缩。
 
@@ -63,7 +80,7 @@ https://discord.com/oauth2/authorize?client_id=<CLIENT_ID>&scope=bot+application
 | `PORTFOLIO_CRON` | | 日报时间，默认 `0 9 * * *`（Asia/Shanghai） |
 | `SEND_PORTFOLIO_ON_BOOT` | | 设为 `true` 时，启动后立刻发一份日报 |
 | `MASTER_ID` | | 接收上线私信的用户 ID；留空则关闭此功能，也不会申请 Presence Intent |
-| `TIKTOK_DOWNLOAD` | | 设为 `true` 时开启 TikTok 下载，需要 Message Content Intent |
+| `MEDIA_AUTO_DOWNLOAD` | | 设为 `true` 时开启消息中链接的自动解析，需要 Message Content Intent |
 | `BINANCE_API_KEY` / `BINANCE_SECRET` | | 只读 API key |
 | `BYBIT_API_KEY` / `BYBIT_SECRET` | | 只读 API key |
 | `PIONEX_API_KEY` / `PIONEX_SECRET` | | 只读 API key |
