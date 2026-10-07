@@ -1,7 +1,8 @@
 services:
     portfolio-bot:
         build: .
-        image: yohane0w0/yohaneowo-bot:latest
+        # :latest is the stable (main) build, :dev the develop build (npm run docker:release / docker:dev).
+        image: yohane0w0/yohaneowo-bot:${IMAGE_TAG:-latest}
         container_name: yohaneowo-bot
         restart: unless-stopped
         init: true

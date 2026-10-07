@@ -179,10 +179,22 @@ npm run dev          # 使用 .env.dev 启动 Discord + LINE（含 tunnel）
 
 镜像发布在 Docker Hub：`yohane0w0/yohaneowo-bot`。yt-dlp 和 ffmpeg 已经装在镜像里。
 
-```bash
-docker compose build
-docker compose push
-```
+同一个 Docker Hub 仓库用 tag 区分版本：
+
+| tag | 内容 | 发布指令 | NAS 用的 compose |
+|---|---|---|---|
+| `latest` | `main`（稳定版） | `npm run docker:release`（在 `main` 分支执行） | `compose.nas.yaml` |
+| `dev` | `develop`（测试版） | `npm run docker:dev`（在 `develop` 分支执行） | `compose.nas.dev.yaml` |
+
+指令会用**当前工作目录的代码**来 build，所以执行前要先切到对应的分支。
 
 NAS 上使用 `compose.nas.yaml`，它只拉镜像，不会构建。里面包含 Discord bot、LINE bot、cloudflared 和 XHS-Downloader 四个服务。把它和 `.env` 放在同一个文件夹，拉取新镜像后重启容器即可。
+
+### NAS 上的测试版
+
+`compose.nas.dev.yaml` 和正式版的服务相同，但使用 `:dev` 镜像，容器名称都加上 `-dev`，可以和正式版同时运行。
+
+- 放在 NAS 上**另一个文件夹**，`.env` 填测试 bot 的设置（就是 `.env.dev` 的内容），`CLOUDFLARE_TUNNEL_TOKEN` 用测试 tunnel 的 token。
+- 测试 tunnel 的路由（`line-dev.yohaneowo.com` → `host.docker.internal:8787`）不需要修改：compose 让 LINE bot 容器使用 `host.docker.internal` 这个别名，同一条路由在电脑和 NAS 上都能用。
+- **测试版在 NAS 上运行时，要关掉电脑上的 `npm run dev`**，因为两边用的是同一组测试 bot 的 token。
 注册稳定版的 slash 命令：`npm run deploy`。

@@ -10,6 +10,8 @@
 		"line:dev": "node --env-file=.env.dev line.js",
 		"deploy": "node --env-file=.env deploy-commands.js",
 		"deploy:dev": "node --env-file=.env.dev deploy-commands.js",
+		"docker:dev": "docker build -t yohane0w0/yohaneowo-bot:dev . && docker push yohane0w0/yohaneowo-bot:dev",
+		"docker:release": "docker build -t yohane0w0/yohaneowo-bot:latest . && docker push yohane0w0/yohaneowo-bot:latest",
 		"format": "prettier --write .",
 		"format:check": "prettier --check .",
 		"test": "echo \"Error: no test specified\" && exit 1"

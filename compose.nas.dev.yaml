@@ -1,0 +1,56 @@
+# Test (develop) stack for the NAS: same services as compose.nas.yaml but on the :dev image,
+# with -dev container names so it can sit next to the stable stack.
+# Put it in its own folder with a .env holding the test bots' settings (what .env.dev has),
+# then `docker compose -f compose.nas.dev.yaml up -d`.
+# Stop `npm run dev` on the PC while this runs: both use the same test bot tokens.
+services:
+    portfolio-bot:
+        image: yohane0w0/yohaneowo-bot:dev
+        container_name: yohaneowo-bot-dev
+        restart: unless-stopped
+        init: true
+        env_file:
+            - .env
+        environment: &xhs_env
+            XHS_API_URL: http://xhs-downloader:5556
+        logging: &logging
+            driver: json-file
+            options:
+                max-size: 10m
+                max-file: '3'
+
+    line-bot:
+        image: yohane0w0/yohaneowo-bot:dev
+        container_name: yohaneowo-line-bot-dev
+        restart: unless-stopped
+        init: true
+        command: ['node', 'line.js']
+        env_file:
+            - .env
+        environment: *xhs_env
+        networks:
+            default:
+                # The test tunnel's route (line-dev.yohaneowo.com) targets host.docker.internal:8787,
+                # which is the PC when `npm run dev` runs there. This alias makes the same route
+                # reach this container on the NAS, so Cloudflare needs no change when switching.
+                aliases:
+                    - host.docker.internal
+        logging: *logging
+
+    xhs-downloader:
+        image: joeanamier/xhs-downloader:latest
+        container_name: yohaneowo-xhs-downloader-dev
+        restart: unless-stopped
+        command: ['python', 'main.py', 'api']
+        logging: *logging
+
+    cloudflared:
+        image: cloudflare/cloudflared:latest
+        container_name: yohaneowo-cloudflared-dev
+        restart: unless-stopped
+        command: ['tunnel', '--no-autoupdate', 'run']
+        environment:
+            TUNNEL_TOKEN: ${CLOUDFLARE_TUNNEL_TOKEN}
+        depends_on:
+            - line-bot
+        logging: *logging
