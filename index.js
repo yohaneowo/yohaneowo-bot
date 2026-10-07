@@ -2,18 +2,33 @@
 const fs = require('node:fs');
 const path = require('node:path');
 const cron = require('node-cron');
-const { Client, Collection, Events, GatewayIntentBits, MessageFlags } = require('discord.js');
+const { Client, Collection, Events, GatewayIntentBits, MessageFlags, Partials } = require('discord.js');
 const { getPortfolioSnapshot, createPortfolioEmbed } = require('./services/portfolio');
+const { extractTikTokUrls, isOnlyTikTokUrls, downloadTikTok } = require('./services/tiktok');
 
 const statusNotifyUserId = process.env.MASTER_ID || process.env.DISCORD_STATUS_NOTIFY_USER_ID;
 const statusNotificationCooldownMs = 3 * 60 * 60 * 1000;
+// Requires the privileged Message Content intent to be enabled in the Developer Portal.
+const tiktokDownloadEnabled = process.env.TIKTOK_DOWNLOAD === 'true';
+const maxConcurrentTikTokDownloads = 2;
 const clientIntents = [GatewayIntentBits.Guilds];
+const clientPartials = [];
 if (statusNotifyUserId) {
 	clientIntents.push(GatewayIntentBits.GuildPresences);
 }
+if (tiktokDownloadEnabled) {
+	clientIntents.push(
+		GatewayIntentBits.GuildMessages,
+		GatewayIntentBits.DirectMessages,
+		GatewayIntentBits.MessageContent,
+	);
+	// DM channels are not cached, so they arrive as partials.
+	clientPartials.push(Partials.Channel);
+}
 
 // Create a new client instance
-const client = new Client({ intents: clientIntents });
+const client = new Client({ intents: clientIntents, partials: clientPartials });
+let activeTikTokDownloads = 0;
 let lastStatusNotificationAt = 0;
 let isSendingStatusNotification = false;
 
@@ -52,6 +67,9 @@ client.once(Events.ClientReady, async (readyClient) => {
 	console.log(`Ready! Logged in as ${readyClient.user.tag}`);
 	if (statusNotifyUserId) {
 		console.log('Idle-to-online DM notifications are enabled.');
+	}
+	if (tiktokDownloadEnabled) {
+		console.log('TikTok auto-download is enabled.');
 	}
 
 	const cronExpression = process.env.PORTFOLIO_CRON || '0 9 * * *';
@@ -98,6 +116,101 @@ if (statusNotifyUserId) {
 		}
 		finally {
 			isSendingStatusNotification = false;
+		}
+	});
+}
+
+// Bot upload limit follows the server boost tier; DMs and unboosted servers allow 10 MB.
+function getUploadLimitBytes(guild) {
+	const limitMb = { 2: 50, 3: 100 }[guild?.premiumTier] ?? 10;
+	return Math.floor(limitMb * 1000 * 1000 * 0.98);
+}
+
+// The original link message may get deleted, so the caption carries the sharer and the link.
+function formatTikTokCaption(video, message, url) {
+	const title = video.title.length > 300 ? `${video.title.slice(0, 300)}…` : video.title;
+	const lines = [video.uploader ? `**@${video.uploader}**` : null, title || null];
+	const sharer = message.guild ? `<@${message.author.id}> 分享 · ` : '';
+	lines.push(`-# ${sharer}<${url}>${video.compressed ? ' · 原片超过上传上限，已压缩' : ''}`);
+	return lines.filter(Boolean).join('\n');
+}
+
+const tiktokStageText = {
+	downloading: '⬇️ 下载中…',
+	compressing: '🗜️ 影片超过上传上限，压缩中…',
+};
+
+// Replies with a status message, edits it as the job progresses, then turns it into the video.
+// Returns true once the video has been posted.
+async function replyWithTikTokVideo(message, url) {
+	const status = await message.reply({
+		content: '🔍 收到链接，解析中…',
+		allowedMentions: { repliedUser: false },
+	});
+
+	// Serialize edits so a slow edit can't land after a newer one.
+	let pendingEdit = Promise.resolve();
+	const setStatus = (content) => {
+		pendingEdit = pendingEdit
+			.then(() => status.edit(content))
+			.catch((error) => console.warn('TikTok status edit failed:', error.message));
+		return pendingEdit;
+	};
+
+	let video;
+	try {
+		video = await downloadTikTok(url, getUploadLimitBytes(message.guild), (stage) =>
+			setStatus(tiktokStageText[stage]),
+		);
+		await setStatus('⬆️ 上传中…');
+		await status.edit({
+			content: formatTikTokCaption(video, message, url),
+			files: [{ attachment: video.filePath, name: 'tiktok.mp4' }],
+			allowedMentions: { parse: [] },
+		});
+		return true;
+	}
+	catch (error) {
+		console.warn(`TikTok download failed for ${url}:`, error.message);
+		await pendingEdit;
+		await setStatus('❌ TikTok 影片解析失败了 😢');
+		return false;
+	}
+	finally {
+		await video?.cleanup();
+	}
+}
+
+if (tiktokDownloadEnabled) {
+	client.on(Events.MessageCreate, async (message) => {
+		if (message.author.bot) return;
+
+		const allUrls = extractTikTokUrls(message.content);
+		const urls = allUrls.slice(0, 3);
+		if (!urls.length || activeTikTokDownloads >= maxConcurrentTikTokDownloads) return;
+
+		activeTikTokDownloads += 1;
+		try {
+			let allPosted = true;
+			for (const url of urls) {
+				const posted = await replyWithTikTokVideo(message, url).catch((error) => {
+					console.warn(`TikTok status reply failed for ${url}:`, error.message);
+					return false;
+				});
+				allPosted &&= posted;
+			}
+
+			// Only delete when every link was posted and the message had nothing else in it.
+			// Needs Manage Messages in servers; bots can never delete a user's DM messages.
+			const handledAll = allPosted && urls.length === allUrls.length;
+			if (handledAll && message.deletable && isOnlyTikTokUrls(message.content)) {
+				await message
+					.delete()
+					.catch((error) => console.warn('Failed to delete TikTok link message:', error.message));
+			}
+		}
+		finally {
+			activeTikTokDownloads -= 1;
 		}
 	});
 }
