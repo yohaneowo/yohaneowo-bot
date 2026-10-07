@@ -26,18 +26,26 @@ function getInteractionUploadLimitBytes(interaction) {
 	return Math.floor(limit * 0.98);
 }
 
+// Leaves room under Discord's 2000-character message limit for the author and link lines.
+const MAX_TEXT_LENGTH = 1500;
+
 // The original link message may get deleted, so the caption carries the link (and sharer if given).
-function formatCaption(video, url, sharerId) {
-	const title = video.title.length > 300 ? `${video.title.slice(0, 300)}…` : video.title;
-	const lines = [video.uploader ? `**@${video.uploader}**` : null, title || null];
+function formatCaption(media, url, sharerId) {
+	const text = media.text.length > MAX_TEXT_LENGTH ? `${media.text.slice(0, MAX_TEXT_LENGTH)}…` : media.text;
 	const sharer = sharerId ? `<@${sharerId}> 分享 · ` : '';
-	lines.push(`-# ${sharer}<${url}>${video.compressed ? ' · 原片超过上传上限，已压缩' : ''}`);
-	return lines.filter(Boolean).join('\n');
+	return [
+		`-# ${sharer}<${url}>`,
+		media.author ? `**${media.author}**` : null,
+		text || null,
+		media.compressed ? '-# 原片超过上传上限，已压缩' : null,
+	]
+		.filter(Boolean)
+		.join('\n');
 }
 
 // Drives a status message (already showing INITIAL_STATUS) through the download stages,
-// then replaces it with the video. `update(payload)` edits that status message.
-// Returns true once the video has been posted.
+// then replaces it with the post/video. `update(payload)` edits that status message.
+// Returns true once the result has been posted.
 async function postMedia({ url, maxBytes, sharerId, update }) {
 	// Serialize edits so a slow edit can't land after a newer one.
 	let pendingEdit = Promise.resolve();
@@ -49,18 +57,18 @@ async function postMedia({ url, maxBytes, sharerId, update }) {
 	};
 
 	if (isMediaQueueFull()) {
-		await setStatus('⏳ 目前处理中的影片太多，请稍后再试');
+		await setStatus('⏳ 目前处理中的链接太多，请稍后再试');
 		return false;
 	}
 
 	activeDownloads += 1;
-	let video;
+	let media;
 	try {
-		video = await downloadMedia(url, maxBytes, (stage) => setStatus(STAGE_TEXT[stage]));
+		media = await downloadMedia(url, maxBytes, (stage) => setStatus(STAGE_TEXT[stage]));
 		await setStatus('⬆️ 上传中…');
 		await update({
-			content: formatCaption(video, url, sharerId),
-			files: [{ attachment: video.filePath, name: 'video.mp4' }],
+			content: formatCaption(media, url, sharerId),
+			files: media.files.map((file) => ({ attachment: file.path, name: file.name })),
 			allowedMentions: { parse: [] },
 		});
 		return true;
@@ -68,12 +76,12 @@ async function postMedia({ url, maxBytes, sharerId, update }) {
 	catch (error) {
 		console.warn(`Media download failed for ${url}:`, error.message);
 		await pendingEdit;
-		await setStatus('❌ 影片解析失败了 😢');
+		await setStatus('❌ 解析失败了 😢');
 		return false;
 	}
 	finally {
 		activeDownloads -= 1;
-		await video?.cleanup();
+		await media?.cleanup();
 	}
 }
 
