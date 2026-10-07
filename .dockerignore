@@ -8,3 +8,4 @@ node_modules
 npm-debug.log*
 Dockerfile
 compose.yaml
+compose.nas.yaml

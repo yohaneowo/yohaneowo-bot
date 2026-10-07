@@ -4,7 +4,10 @@
 	"main": "index.js",
 	"scripts": {
 		"start": "node --env-file=.env index.js",
-		"dev": "node --env-file=.env.dev index.js",
+		"dev": "node scripts/dev.js",
+		"dev:dc": "node --env-file=.env.dev index.js",
+		"line": "node --env-file=.env line.js",
+		"line:dev": "node --env-file=.env.dev line.js",
 		"deploy": "node --env-file=.env deploy-commands.js",
 		"deploy:dev": "node --env-file=.env.dev deploy-commands.js",
 		"format": "prettier --write .",
@@ -16,8 +19,10 @@
 	"keywords": [],
 	"description": "",
 	"dependencies": {
+		"@line/bot-sdk": "^11.3.0",
 		"ccxt": "^4.5.85",
 		"discord.js": "^14.27.0",
+		"express": "^5.2.1",
 		"node-cron": "^4.6.0"
 	},
 	"devDependencies": {

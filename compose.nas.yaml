@@ -1,0 +1,39 @@
+# Compose file for the NAS: pulls the published image instead of building.
+# Put it next to the stable .env and run `docker compose -f compose.nas.yaml up -d`
+# (or create a Container Manager project from it).
+services:
+    portfolio-bot:
+        image: yohane0w0/yohaneowo-bot:latest
+        container_name: yohaneowo-bot
+        restart: unless-stopped
+        init: true
+        env_file:
+            - .env
+        logging: &logging
+            driver: json-file
+            options:
+                max-size: 10m
+                max-file: '3'
+
+    # LINE webhook + media server, reached through the Cloudflare Tunnel below.
+    line-bot:
+        image: yohane0w0/yohaneowo-bot:latest
+        container_name: yohaneowo-line-bot
+        restart: unless-stopped
+        init: true
+        command: ['node', 'line.js']
+        env_file:
+            - .env
+        logging: *logging
+
+    # Public hostname (e.g. line.yohaneowo.com) -> http://line-bot:8787, configured in Cloudflare Zero Trust.
+    cloudflared:
+        image: cloudflare/cloudflared:latest
+        container_name: yohaneowo-cloudflared
+        restart: unless-stopped
+        command: ['tunnel', '--no-autoupdate', 'run']
+        environment:
+            TUNNEL_TOKEN: ${CLOUDFLARE_TUNNEL_TOKEN}
+        depends_on:
+            - line-bot
+        logging: *logging

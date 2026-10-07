@@ -74,6 +74,54 @@ bot 无法读取两个用户之间的私信，所以那里只能由你主动触�
 - 上线私信要求 bot 与你在同一个服务器里，而且你允许接收该服务器成员的私信。
 - bot 上传文件的上限跟随服务器加成等级：未加成或私信为 10 MB，2 级 50 MB，3 级 100 MB。超过上限的影片会自动压缩。
 
+## LINE
+
+`line.js` 是独立的进程，和 Discord bot 共用 `services/media.js`。在 bot 所在的群组，或和 bot 的一对一聊天里贴链接，bot 会回复一则文字（作者、内文、链接）和影片或图片。
+
+LINE 不支持上传文件，只能由 LINE 从网址下载。所以 `line.js` 同时提供：
+
+- `/webhook`：接收 LINE 推送的消息，会验证签名；
+- `/media/<随机ID>/…`：对外提供下载好的影片和图片，24 小时后自动删除。
+
+这两个都通过 Cloudflare Tunnel 公开在 `https://line.yohaneowo.com`。
+
+### 和 Discord 版的差别
+
+- 不能编辑消息，所以没有处理进度。一对一聊天会显示 LINE 的"处理中"动画，群组里没有提示。
+- 不能删除原链接消息，也不能在你和朋友的私聊里使用。要私下分享，就开一个只有你、朋友和 bot 的群组。
+- 一则消息最多解析 2 个链接（一次回复最多 5 则消息）。
+- 回复（reply）免费，但 reply token 很快就会失效。下载太慢错过时效时，会改用推送（push），push 要计入每月的消息额度，而且群组里**每个成员都算一则**。设置 `LINE_PUSH_FALLBACK=false` 可以关闭这个行为，错过时效就直接放弃。
+
+### 设置步骤
+
+1. 在 [LINE Official Account Manager](https://manager.line.biz) 建立官方帐号：
+   - 在「设置 → Messaging API」启用 Messaging API；
+   - 在「设置 → 帐号设置」允许加入群组；
+   - 在「回应设置」关闭自动回应消息和加入好友的欢迎消息。
+2. 在 [LINE Developers](https://developers.line.biz/console/) 打开这个 channel：
+   - 在 Basic settings 复制 **Channel secret**；
+   - 在 Messaging API 页面发行 **Channel access token**（long-lived）。
+3. 在 Cloudflare Zero Trust 的「Networks → Tunnels」建立 tunnel（类型选 cloudflared），复制 tunnel token。然后加一个 Public Hostname：`line.yohaneowo.com` → `http://line-bot:8787`。
+4. 在 NAS 的 `.env` 里加上下表的 LINE 变量和 `CLOUDFLARE_TUNNEL_TOKEN`，用 `compose.nas.yaml` 启动。
+5. 回到 LINE Developers 的 Messaging API 页面：
+   - Webhook URL 填 `https://line.yohaneowo.com/webhook`，打开 **Use webhook**，按 **Verify** 应该会显示成功。
+6. 把官方帐号加为好友，再邀请进群组。
+
+### 本机测试
+
+`npm run dev` 会同时启动 Discord bot、Cloudflare tunnel 和 LINE bot，并**自动把 LINE 的 Webhook URL 设好、验证通过**。需要先打开 Docker Desktop，因为 tunnel 是在 Docker 里跑的。
+
+tunnel 有两种模式，由 `.env.dev` 决定：
+
+| `.env.dev` | 公开网址 |
+|---|---|
+| 有 `CLOUDFLARE_TUNNEL_TOKEN` | 固定网址，例如 `line-dev.yohaneowo.com`，就是 `LINE_PUBLIC_URL`。在 Cloudflare 建一个测试用的 tunnel，Public Hostname 指向 `http://host.docker.internal:8787` |
+| 没有 | 临时网址 `https://xxxx.trycloudflare.com`，每次启动都不同，自动当作 `LINE_PUBLIC_URL` 使用 |
+
+> 测试版和稳定版要用**不同的 LINE channel**（和 Discord 一样分成两个 bot）。dev 脚本会改写 channel 的 Webhook URL，共用同一个 channel 的话，正式环境会被导到你的电脑。
+
+`npm run dev -- --line-only` 只启动 LINE 的部分；`npm run dev:dc` 只启动 Discord bot。
+
 ## 环境变量
 
 稳定版用 `.env`，测试版用 `.env.dev`。两个文件都已被 git 忽略。
@@ -92,6 +140,13 @@ bot 无法读取两个用户之间的私信，所以那里只能由你主动触�
 | `BYBIT_API_KEY` / `BYBIT_SECRET` | | 只读 API key |
 | `PIONEX_API_KEY` / `PIONEX_SECRET` | | 只读 API key |
 | `YTDLP_PATH` / `FFMPEG_PATH` | | 默认使用 PATH 里的 `yt-dlp` / `ffmpeg` |
+| `LINE_CHANNEL_SECRET` | LINE ✅ | LINE channel secret，用来验证 webhook 签名 |
+| `LINE_CHANNEL_ACCESS_TOKEN` | LINE ✅ | LINE channel access token（long-lived） |
+| `LINE_PUBLIC_URL` | LINE ✅ | LINE 下载影片和图片用的公开网址，例如 `https://line.yohaneowo.com` |
+| `LINE_PORT` | | 默认 `8787`（Windows 会保留 3000 附近的端口） |
+| `LINE_PUSH_FALLBACK` | | 默认开启；设为 `false` 时，reply 超时就放弃，不改用 push |
+| `LINE_MEDIA_DIR` | | 存放对外文件的目录，默认在系统暂存目录下 |
+| `CLOUDFLARE_TUNNEL_TOKEN` | NAS | `compose.nas.yaml` 里的 cloudflared 会用到 |
 
 > 测试版的 `PORTFOLIO_CHANNEL_ID` 和 `MASTER_ID` 建议留空或改成测试用的值，否则两个 bot 会重复发送日报和私信。
 
@@ -106,7 +161,7 @@ pip install -U "yt-dlp[default,curl-cffi]"
 ```bash
 npm install
 npm run deploy:dev   # 注册 slash 命令（只在新增或修改命令时需要）
-npm run dev          # 使用 .env.dev 启动
+npm run dev          # 使用 .env.dev 启动 Discord + LINE（含 tunnel）
 ```
 
 ## 部署（稳定版，`main` 分支）
@@ -118,5 +173,5 @@ docker compose build
 docker compose push
 ```
 
-在 NAS 上使用只含 `image:` 的 compose（不含 `build:`），把 `.env` 放在同一个文件夹，拉取新镜像后重启容器即可。
+NAS 上使用 `compose.nas.yaml`，它只拉镜像，不会构建。里面包含 Discord bot、LINE bot 和 cloudflared 三个服务。把它和 `.env` 放在同一个文件夹，拉取新镜像后重启容器即可。
 注册稳定版的 slash 命令：`npm run deploy`。
