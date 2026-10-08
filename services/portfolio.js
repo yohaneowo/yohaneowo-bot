@@ -500,6 +500,8 @@ async function getPortfolioSnapshot(exchangeName = 'all') {
 		exchangeName === 'all' ? Object.keys(EXCHANGE_MAP) : [String(exchangeName).toLowerCase()];
 
 	const results = [];
+	// Accounts that could not be read; the totals then leave them out.
+	const failures = [];
 	let spotTotal = 0;
 	let futuresTotal = 0;
 	let futuresUsdtTotal = 0;
@@ -519,6 +521,7 @@ async function getPortfolioSnapshot(exchangeName = 'all') {
 			}
 			catch (error) {
 				console.warn(`Spot portfolio unavailable for ${target}:`, error.message);
+				failures.push(`${target} spot`);
 			}
 
 			try {
@@ -529,6 +532,7 @@ async function getPortfolioSnapshot(exchangeName = 'all') {
 			}
 			catch (error) {
 				console.warn(`Futures portfolio unavailable for ${target}:`, error.message);
+				failures.push(`${target} futures`);
 			}
 		}
 
@@ -542,6 +546,7 @@ async function getPortfolioSnapshot(exchangeName = 'all') {
 			}
 			catch (error) {
 				console.warn('Pionex account balance unavailable:', error.message);
+				failures.push('pionex');
 			}
 		}
 
@@ -553,6 +558,7 @@ async function getPortfolioSnapshot(exchangeName = 'all') {
 			}
 			catch (error) {
 				console.warn('Bybit Funding account unavailable:', error.message);
+				failures.push('bybit funding');
 			}
 
 			try {
@@ -562,6 +568,7 @@ async function getPortfolioSnapshot(exchangeName = 'all') {
 			}
 			catch (error) {
 				console.warn('Bybit Earn portfolio unavailable:', error.message);
+				failures.push('bybit earn');
 			}
 		}
 
@@ -573,6 +580,7 @@ async function getPortfolioSnapshot(exchangeName = 'all') {
 			}
 			catch (error) {
 				console.warn('Binance Funding account unavailable:', error.message);
+				failures.push('binance funding');
 			}
 
 			try {
@@ -582,6 +590,7 @@ async function getPortfolioSnapshot(exchangeName = 'all') {
 			}
 			catch (error) {
 				console.warn('Binance Earn portfolio unavailable:', error.message);
+				failures.push('binance earn');
 			}
 		}
 
@@ -593,6 +602,7 @@ async function getPortfolioSnapshot(exchangeName = 'all') {
 			}
 			catch (error) {
 				console.warn(`${target} inverse-contract wallet unavailable:`, error.message);
+				failures.push(`${target} inverse-contract wallet`);
 			}
 		}
 	}
@@ -621,6 +631,7 @@ async function getPortfolioSnapshot(exchangeName = 'all') {
 		fearGreed,
 		mstrMnav,
 		totalTwd: totalTwd,
+		failures,
 		generatedAt: new Date().toISOString(),
 	};
 }

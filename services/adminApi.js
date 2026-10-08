@@ -94,6 +94,24 @@ async function reportActivity(platform, externalId, loadGroup) {
 	}
 }
 
+// snapshot: the result of services/portfolio.js getPortfolioSnapshot('all').
+// Only totals per account are sent; holdings stay in the bot.
+function reportPortfolio(snapshot) {
+	return post('/portfolio/report', {
+		total_twd: snapshot.totalTwd,
+		total_usdt: snapshot.total,
+		twd_rate: snapshot.twdRate,
+		// Futures count by usdtTotal in the grand total (total there is position notional).
+		accounts: snapshot.exchanges.map((account) => ({
+			exchange: account.exchange,
+			type: account.type,
+			total: account.type === 'futures' ? account.usdtTotal : account.total,
+		})),
+		failures: snapshot.failures ?? [],
+		occurred_at: snapshot.generatedAt,
+	});
+}
+
 function truncate(text) {
 	if (typeof text !== 'string' || text.length <= MAX_LOG_TEXT_LENGTH) return text;
 	return `${text.slice(0, MAX_LOG_TEXT_LENGTH)}…（已截断，原长 ${text.length} 字）`;
@@ -194,6 +212,7 @@ module.exports = {
 	reportLeave,
 	reportActivity,
 	reportParse,
+	reportPortfolio,
 	withLogSite,
 	installConsoleCapture,
 };

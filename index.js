@@ -20,6 +20,7 @@ const {
 	reportJoin,
 	reportLeave,
 	reportActivity,
+	reportPortfolio,
 	installConsoleCapture,
 } = require('./services/adminApi');
 
@@ -27,6 +28,8 @@ installConsoleCapture('discord');
 
 // Re-sync periodically so member counts stay fresh and changes missed while the admin was down catch up.
 const ADMIN_SYNC_INTERVAL_MS = 60 * 60 * 1000;
+// Total assets shown on the admin home page; every report is kept as history.
+const ADMIN_PORTFOLIO_INTERVAL_MS = 15 * 60 * 1000;
 
 const statusNotifyUserId = process.env.MASTER_ID || process.env.DISCORD_STATUS_NOTIFY_USER_ID;
 const statusNotificationCooldownMs = 3 * 60 * 60 * 1000;
@@ -92,6 +95,15 @@ function toAdminGroup(guild) {
 	};
 }
 
+async function reportPortfolioToAdmin() {
+	try {
+		await reportPortfolio(await getPortfolioSnapshot('all'));
+	}
+	catch (error) {
+		console.warn('Portfolio report to the admin failed:', error.message);
+	}
+}
+
 async function syncGuildsToAdmin() {
 	const guilds = client.guilds.cache.filter((guild) => guild.available);
 	const synced = await syncGroups('discord', guilds.map(toAdminGroup));
@@ -112,6 +124,8 @@ client.once(Events.ClientReady, async (readyClient) => {
 	if (adminApiEnabled) {
 		await syncGuildsToAdmin();
 		setInterval(syncGuildsToAdmin, ADMIN_SYNC_INTERVAL_MS).unref();
+		reportPortfolioToAdmin();
+		setInterval(reportPortfolioToAdmin, ADMIN_PORTFOLIO_INTERVAL_MS).unref();
 	}
 
 	const cronExpression = process.env.PORTFOLIO_CRON || '0 9 * * *';
