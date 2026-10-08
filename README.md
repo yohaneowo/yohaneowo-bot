@@ -29,6 +29,10 @@
 
   支持的网站列在 `services/media.js` 的 `SUPPORTED_SITES`，每个网站在 `services/sites/` 里有自己的处理函数。
 
+- **动态语音频道**：管理员用 `/voice-hub` 建立一个限 1 人的入口语音频道（可用 `name:` 自定名称、`category:` 指定分类）。
+  有人进入入口，bot 会在同一个分类开一个「<名字> 的频道」（不限人数，权限跟随分类）并把人移过去；这个频道没人后 10 秒自动删除。
+  不需要入口时直接删除那个频道即可。入口和临时频道记在 `data/voice-hubs.json`，bot 重启后会继续管理，离线期间空掉的频道也会在启动后删除。
+
 ## Discord 设置
 
 ### Intent（Developer Portal → Bot → Privileged Gateway Intents）
@@ -36,6 +40,7 @@
 | Intent | 特权 | 何时需要 | 用途 |
 |---|---|---|---|
 | Guilds | 否 | 一直需要 | slash 命令、频道 |
+| Guild Voice States | 否 | 一直需要 | 知道谁在哪个语音频道（动态语音频道） |
 | **Presence Intent** | ✅ | 设置了 `MASTER_ID` | 检测闲置 → 在线，触发私信 |
 | **Message Content Intent** | ✅ | `MEDIA_AUTO_DOWNLOAD=true` | 读取消息中的影片链接 |
 | Guild Messages / Direct Messages | 否 | `MEDIA_AUTO_DOWNLOAD=true` | 接收群组与私信的消息事件 |
@@ -56,6 +61,9 @@
 | 附加文件 | 上传影片 |
 | 阅读消息历史 | 回复（reply）原消息 |
 | 管理消息 | 可选：自动解析成功后删除原链接消息；没有这个权限时只是不删除 |
+| 管理频道 | 动态语音：建立入口和临时语音频道、删除空频道 |
+| 连接 | 动态语音：把人移进频道时 bot 本身要能连接那个频道 |
+| 移动成员 | 动态语音：把进入入口的人移到新频道 |
 
 权限在服务器里设置，不需要回 Developer Portal。bot 已经在服务器里的话，直接修改它的身份组即可。
 
@@ -64,10 +72,11 @@
 把 `<CLIENT_ID>` 换成该 bot 的 Application ID：
 
 ```
-https://discord.com/oauth2/authorize?client_id=<CLIENT_ID>&scope=bot+applications.commands&permissions=125952
+https://discord.com/oauth2/authorize?client_id=<CLIENT_ID>&scope=bot+applications.commands&permissions=17951760
 ```
 
-`125952` 包含上表全部权限。不需要删除原链接的话，用 `117760`（不含管理消息）。
+`17951760` 包含上表全部权限。不需要删除原链接的话，用 `17943568`（不含管理消息）。
+bot 已经在服务器里的话，不用重新邀请，直接在它的身份组加上「管理频道」「连接」「移动成员」即可。
 
 ### 用户安装（在和朋友的私信里使用）
 
@@ -163,6 +172,7 @@ tunnel 有两种模式，由 `.env.dev` 决定：
 | `CLOUDFLARE_TUNNEL_TOKEN` | NAS | `compose.nas.yaml` 里的 cloudflared 会用到 |
 | `ADMIN_API_URL` | | yohaneowo-admin 后端的网址，例如 `http://localhost:8001`；设了才会把所在的服务器、群组和活动时间上报给后台 |
 | `ADMIN_API_TOKEN` | | 跟 admin 的 `BOT_API_TOKEN` 填同一个值 |
+| `DATA_DIR` | | 存放需要保留的资料（动态语音频道），默认是项目下的 `data/`。Docker 里是 `/app/data`，由 compose 的 `bot-data` volume 保存 |
 
 > 测试版的 `PORTFOLIO_CHANNEL_ID` 和 `MASTER_ID` 建议留空或改成测试用的值，否则两个 bot 会重复发送日报和私信。
 

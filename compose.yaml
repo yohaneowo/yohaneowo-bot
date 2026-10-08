@@ -6,6 +6,9 @@ services:
         container_name: yohaneowo-bot
         restart: unless-stopped
         init: true
+        # Dynamic voice channel state (/voice-hub); survives image updates.
+        volumes:
+            - bot-data:/app/data
         env_file:
             - .env
         logging:
@@ -13,3 +16,6 @@ services:
             options:
                 max-size: 10m
                 max-file: '3'
+
+volumes:
+    bot-data:

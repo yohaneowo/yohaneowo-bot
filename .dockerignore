@@ -10,3 +10,4 @@ Dockerfile
 compose.yaml
 compose.nas.yaml
 compose.nas.dev.yaml
+data

@@ -9,6 +9,9 @@ services:
         container_name: yohaneowo-bot-dev
         restart: unless-stopped
         init: true
+        # Dynamic voice channel state (/voice-hub); survives image updates.
+        volumes:
+            - bot-data:/app/data
         env_file:
             - .env
         environment: &xhs_env
@@ -54,3 +57,6 @@ services:
         depends_on:
             - line-bot
         logging: *logging
+
+volumes:
+    bot-data:

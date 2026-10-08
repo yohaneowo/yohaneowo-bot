@@ -5,6 +5,7 @@ const cron = require('node-cron');
 const { Client, Collection, Events, GatewayIntentBits, MessageFlags, Partials } = require('discord.js');
 const { getPortfolioSnapshot, createPortfolioEmbed } = require('./services/portfolio');
 const { extractMediaUrls, isOnlyMediaUrls } = require('./services/media');
+const { setupVoiceHubs } = require('./services/voiceHubs');
 const {
 	INITIAL_STATUS,
 	isMediaQueueFull,
@@ -32,7 +33,8 @@ const statusNotificationCooldownMs = 3 * 60 * 60 * 1000;
 // Auto-parses links posted in servers / bot DMs. Requires the privileged Message Content intent.
 // The /x and「解析链接」commands work without it.
 const mediaAutoDownloadEnabled = process.env.MEDIA_AUTO_DOWNLOAD === 'true';
-const clientIntents = [GatewayIntentBits.Guilds];
+// GuildVoiceStates: who is in which voice channel, for the dynamic voice channels (/voice-hub).
+const clientIntents = [GatewayIntentBits.Guilds, GatewayIntentBits.GuildVoiceStates];
 const clientPartials = [];
 if (statusNotifyUserId) {
 	clientIntents.push(GatewayIntentBits.GuildPresences);
@@ -49,6 +51,7 @@ if (mediaAutoDownloadEnabled) {
 
 // Create a new client instance
 const client = new Client({ intents: clientIntents, partials: clientPartials });
+setupVoiceHubs(client);
 let lastStatusNotificationAt = 0;
 let isSendingStatusNotification = false;
 
