@@ -1,5 +1,6 @@
 const { fetchVideo } = require('./video');
 const { fetchOpenGraph, downloadImage, PREVIEW_NOTE } = require('./openGraph');
+const { mediaLog } = require('../mediaLog');
 
 const IMAGE_URL_PATTERN = /^https:\/\/[\w.-]+\.(?:cdninstagram\.com|fbcdn\.net)\//i;
 
@@ -35,10 +36,11 @@ async function fetchInstagramPost(url, dir, maxBytes, onStage) {
 	catch (error) {
 		// Too-long videos aren't a download problem; report them rather than posting a cover.
 		if (error.code === 'VIDEO_TOO_LONG') throw error;
-		console.warn(`Instagram video unavailable (${error.message}); falling back to link preview.`);
+		mediaLog.warn(`no video (${error.message}); falling back to link preview`);
 	}
 
 	const meta = await fetchOpenGraph(url);
+	mediaLog.info(`link preview: title "${meta['og:title'] ?? ''}", image ${meta['og:image'] ? 'yes' : 'no'}`);
 	const { author, text } = parseInstagramMeta(meta);
 	const imageUrl = meta['og:image'] ?? '';
 	if (!author && !imageUrl) {

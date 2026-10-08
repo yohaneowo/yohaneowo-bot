@@ -3,6 +3,7 @@ const path = require('node:path');
 const { execFile, spawn } = require('node:child_process');
 const { promisify } = require('node:util');
 const { UserFacingError } = require('./errors');
+const { mediaLog, formatMb } = require('../mediaLog');
 
 const execFileAsync = promisify(execFile);
 
@@ -83,14 +84,33 @@ async function findDownloadedFile(dir) {
 	return path.join(dir, video);
 }
 
-// Some sites (e.g. Instagram) report no duration, so read it from the downloaded file.
-async function probeDuration(filePath) {
-	const { stdout } = await execFileAsync(
-		FFPROBE_PATH,
-		['-v', 'error', '-show_entries', 'format=duration', '-of', 'csv=p=0', filePath],
-		{ timeout: 30 * 1000 },
-	);
-	return Number(stdout.trim());
+// Reads resolution, codec and duration from the file itself: sites often report none of them
+// (Instagram has no duration, Facebook's hd format no resolution). Resolves to null on failure.
+async function probeVideo(filePath) {
+	try {
+		const { stdout } = await execFileAsync(
+			FFPROBE_PATH,
+			[
+				'-v', 'error',
+				'-select_streams', 'v:0',
+				'-show_entries', 'stream=width,height,codec_name:format=duration',
+				'-of', 'json',
+				filePath,
+			],
+			{ timeout: 30 * 1000 },
+		);
+		const { streams, format } = JSON.parse(stdout);
+		return {
+			width: streams?.[0]?.width,
+			height: streams?.[0]?.height,
+			codec: streams?.[0]?.codec_name,
+			duration: Number(format?.duration),
+		};
+	}
+	catch (error) {
+		mediaLog.warn(`ffprobe failed: ${error.message}`);
+		return null;
+	}
 }
 
 async function compressToFit(inputPath, outputPath, durationSeconds, maxBytes) {
@@ -103,6 +123,7 @@ async function compressToFit(inputPath, outputPath, durationSeconds, maxBytes) {
 	// The encoder can overshoot the target bitrate, so retry with a proportionally lower one.
 	for (let attempt = 0; attempt < 3; attempt++) {
 		if (videoKbps < MIN_VIDEO_KBPS) {
+			mediaLog.warn(`would need ${videoKbps} kbps for ${Math.round(durationSeconds)}s (minimum ${MIN_VIDEO_KBPS}), skipping`);
 			// media.js rewrites this with the site name ("建议直接到 TikTok 观看").
 			throw Object.assign(new UserFacingError('影片太长，压缩后会太糊，建议直接到原网站观看'), {
 				code: 'VIDEO_TOO_LONG',
@@ -128,6 +149,7 @@ async function compressToFit(inputPath, outputPath, durationSeconds, maxBytes) {
 		);
 
 		const { size } = await fs.stat(outputPath);
+		mediaLog.info(`ffmpeg attempt ${attempt + 1} at ${videoKbps} kbps -> ${formatMb(size)}`);
 		if (size <= maxBytes) {
 			return outputPath;
 		}
@@ -141,12 +163,18 @@ async function compressToFit(inputPath, outputPath, durationSeconds, maxBytes) {
 // known, otherwise from the file itself.
 async function fitVideoToLimit(filePath, dir, maxBytes, onStage, knownDuration) {
 	const { size } = await fs.stat(filePath);
+	const probe = await probeVideo(filePath);
+	const duration = knownDuration > 0 ? knownDuration : probe?.duration;
+	mediaLog.info(
+		`video ${probe?.width ?? '?'}x${probe?.height ?? '?'} ${probe?.codec ?? '?'}, ` +
+			`${duration > 0 ? `${Math.round(duration)}s` : 'unknown length'}, ${formatMb(size)}`,
+	);
 	if (size <= maxBytes) {
 		return { filePath, compressed: false };
 	}
 
 	onStage?.('compressing');
-	const duration = knownDuration > 0 ? knownDuration : await probeDuration(filePath);
+	mediaLog.info(`over the ${formatMb(maxBytes)} limit, compressing`);
 	const compressedPath = await compressToFit(filePath, path.join(dir, 'compressed.mp4'), duration, maxBytes);
 	return { filePath: compressedPath, compressed: true };
 }
@@ -154,6 +182,7 @@ async function fitVideoToLimit(filePath, dir, maxBytes, onStage, knownDuration) 
 // Downloads a video with yt-dlp into dir, compressing it when it exceeds maxBytes.
 // onStage is called with 'downloading' and (if needed) 'compressing' as the work progresses.
 async function fetchVideo(url, dir, maxBytes, onStage) {
+	mediaLog.info('running yt-dlp');
 	const stdout = await runYtDlp(
 		[
 			'--no-playlist',
@@ -170,11 +199,16 @@ async function fetchVideo(url, dir, maxBytes, onStage) {
 			'--',
 			url,
 		],
-		() => onStage?.('downloading'),
+		() => {
+			mediaLog.info('yt-dlp extracted, downloading');
+			onStage?.('downloading');
+		},
 	);
 	const info = JSON.parse(stdout.trim().split('\n').pop());
+	const downloadedPath = await findDownloadedFile(dir);
+	mediaLog.info(`yt-dlp downloaded format ${info.format_id}`);
 
-	const { filePath, compressed } = await fitVideoToLimit(await findDownloadedFile(dir), dir, maxBytes, onStage, info.duration);
+	const { filePath, compressed } = await fitVideoToLimit(downloadedPath, dir, maxBytes, onStage, info.duration);
 
 	const uploader = info.uploader || info.creator || '';
 	return {

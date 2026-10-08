@@ -1,5 +1,6 @@
 const { fetchVideo } = require('./video');
 const { fetchOpenGraph, downloadImage, PREVIEW_NOTE } = require('./openGraph');
+const { mediaLog } = require('../mediaLog');
 
 const IMAGE_URL_PATTERN = /^https:\/\/[\w.-]+\.(?:fbcdn\.net|fbsbx\.com)\//i;
 
@@ -18,6 +19,7 @@ async function fetchFacebookVideo(url, dir, maxBytes, onStage) {
 // Photo/text posts: the link preview gives the author, text and first image.
 async function fetchFacebookPreview(url, dir, maxBytes, onStage) {
 	const meta = await fetchOpenGraph(url);
+	mediaLog.info(`link preview: title "${meta['og:title'] ?? ''}", image ${meta['og:image'] ? 'yes' : 'no'}`);
 	const author = meta['og:title'] ?? '';
 	const text = meta['og:description'] ?? '';
 	const imageUrl = meta['og:image'] ?? '';
@@ -46,7 +48,7 @@ async function fetchFacebookPost(url, dir, maxBytes, onStage) {
 	}
 	catch (error) {
 		if (error.code === 'VIDEO_TOO_LONG') throw error;
-		console.warn(`Facebook video unavailable (${error.message}); falling back to link preview.`);
+		mediaLog.warn(`no video (${error.message}); falling back to link preview`);
 	}
 	return fetchFacebookPreview(url, dir, maxBytes, onStage);
 }

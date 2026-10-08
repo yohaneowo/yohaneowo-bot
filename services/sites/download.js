@@ -1,6 +1,7 @@
 const fs = require('node:fs');
 const { Readable } = require('node:stream');
 const { pipeline } = require('node:stream/promises');
+const { mediaLog, formatMb } = require('../mediaLog');
 
 const DOWNLOAD_TIMEOUT_MS = 2 * 60 * 1000;
 const MAX_DOWNLOAD_BYTES = 500 * 1000 * 1000;
@@ -22,6 +23,7 @@ async function downloadToFile(url, filePath, allowedUrlPattern) {
 	}
 
 	await pipeline(Readable.fromWeb(response.body), fs.createWriteStream(filePath));
+	mediaLog.info(`downloaded ${formatMb(fs.statSync(filePath).size)} from ${new URL(url).hostname}`);
 	return (response.headers.get('content-type') ?? '').split(';')[0].trim();
 }
 

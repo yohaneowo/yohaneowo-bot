@@ -10,7 +10,22 @@ const {
 	isMediaQueueFull,
 	getGuildUploadLimitBytes,
 	postMedia,
+	parseLogContext,
+	reportBusy,
 } = require('./services/mediaPost');
+const {
+	adminApiEnabled,
+	syncGroups,
+	reportJoin,
+	reportLeave,
+	reportActivity,
+	installConsoleCapture,
+} = require('./services/adminApi');
+
+installConsoleCapture('discord');
+
+// Re-sync periodically so member counts stay fresh and changes missed while the admin was down catch up.
+const ADMIN_SYNC_INTERVAL_MS = 60 * 60 * 1000;
 
 const statusNotifyUserId = process.env.MASTER_ID || process.env.DISCORD_STATUS_NOTIFY_USER_ID;
 const statusNotificationCooldownMs = 3 * 60 * 60 * 1000;
@@ -65,6 +80,21 @@ async function sendDailyPortfolioReport() {
 	}
 }
 
+function toAdminGroup(guild) {
+	return {
+		external_id: guild.id,
+		name: guild.name,
+		icon_url: guild.iconURL({ size: 128 }),
+		member_count: guild.memberCount,
+	};
+}
+
+async function syncGuildsToAdmin() {
+	const guilds = client.guilds.cache.filter((guild) => guild.available);
+	const synced = await syncGroups('discord', guilds.map(toAdminGroup));
+	if (synced) console.log(`Synced ${synced.length} servers to the admin.`);
+}
+
 // When the client is ready, run this code (only once).
 // The distinction between `client: Client<boolean>` and `readyClient: Client<true>` is important for TypeScript developers.
 // It makes some properties non-nullable.
@@ -75,6 +105,10 @@ client.once(Events.ClientReady, async (readyClient) => {
 	}
 	if (mediaAutoDownloadEnabled) {
 		console.log('Media link auto-download is enabled.');
+	}
+	if (adminApiEnabled) {
+		await syncGuildsToAdmin();
+		setInterval(syncGuildsToAdmin, ADMIN_SYNC_INTERVAL_MS).unref();
 	}
 
 	const cronExpression = process.env.PORTFOLIO_CRON || '0 9 * * *';
@@ -125,14 +159,29 @@ if (statusNotifyUserId) {
 	});
 }
 
+if (adminApiEnabled) {
+	client.on(Events.GuildCreate, (guild) => reportJoin('discord', toAdminGroup(guild)));
+	client.on(Events.GuildUpdate, (oldGuild, newGuild) => reportJoin('discord', toAdminGroup(newGuild)));
+	client.on(Events.GuildDelete, (guild) => {
+		// An outage also fires GuildDelete; only a real removal should mark the server as left.
+		if (guild.available) reportLeave('discord', guild.id);
+	});
+}
+
 if (mediaAutoDownloadEnabled) {
 	client.on(Events.MessageCreate, async (message) => {
 		if (message.author.bot) return;
+		if (message.guildId) reportActivity('discord', message.guildId);
 
 		const allUrls = extractMediaUrls(message.content);
 		const urls = allUrls.slice(0, 3);
+		if (!urls.length) return;
+		const logContext = parseLogContext('auto', message.guildId, message.author, message.member);
 		// Stay silent when busy rather than answering every link with a "try later".
-		if (!urls.length || isMediaQueueFull()) return;
+		if (isMediaQueueFull()) {
+			for (const url of urls) reportBusy(url, logContext);
+			return;
+		}
 
 		let allPosted = true;
 		for (const url of urls) {
@@ -143,6 +192,7 @@ if (mediaAutoDownloadEnabled) {
 						url,
 						maxBytes: getGuildUploadLimitBytes(message.guild),
 						sharerId: message.guild ? message.author.id : null,
+						logContext,
 						update: (payload) => status.edit(payload),
 					}),
 				)
@@ -187,6 +237,7 @@ for (const folder of commandFolders) {
 
 client.on(Events.InteractionCreate, async (interaction) => {
 	if (!interaction.isChatInputCommand() && !interaction.isMessageContextMenuCommand()) return;
+	if (interaction.guildId) reportActivity('discord', interaction.guildId);
 	const command = interaction.client.commands.get(interaction.commandName);
 
 	if (!command) {

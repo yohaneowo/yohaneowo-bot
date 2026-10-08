@@ -2,6 +2,7 @@ const path = require('node:path');
 const { fitVideoToLimit } = require('./video');
 const { downloadToFile } = require('./download');
 const { UserFacingError } = require('./errors');
+const { mediaLog } = require('../mediaLog');
 
 // Xiaohongshu's web pages need a login unless the link carries an xsec_token, which app share
 // links no longer include. XHS-Downloader (https://github.com/JoeanAmier/XHS-Downloader) gets
@@ -16,6 +17,7 @@ async function fetchNoteDetail(url) {
 		throw new Error('XHS_API_URL is not set; the XHS-Downloader service is required for Xiaohongshu');
 	}
 
+	mediaLog.info(`asking XHS-Downloader at ${XHS_API_URL}`);
 	const response = await fetch(`${XHS_API_URL}/xhs/detail`, {
 		method: 'POST',
 		headers: { 'Content-Type': 'application/json' },
@@ -36,6 +38,7 @@ async function fetchNoteDetail(url) {
 // Video notes are downloaded (and compressed if needed); image notes aren't supported yet.
 async function fetchXiaohongshuNote(url, dir, maxBytes, onStage) {
 	const note = await fetchNoteDetail(url);
+	mediaLog.info(`XHS-Downloader: ${note['作品类型'] ?? '?'} note ${note['作品ID'] ?? '?'} by ${note['作者昵称'] ?? '?'}`);
 	if (note['作品类型'] !== '视频') {
 		throw new UserFacingError('小红书图文笔记暂未开放解析');
 	}

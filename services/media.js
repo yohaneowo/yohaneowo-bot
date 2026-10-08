@@ -7,6 +7,7 @@ const { fetchInstagramPost } = require('./sites/instagram');
 const { fetchXiaohongshuNote } = require('./sites/xiaohongshu');
 const { fetchYouTubeShort } = require('./sites/youtube');
 const { fetchThreadsPost } = require('./sites/threads');
+const { createJob, jobLogger, runInJob, formatMb } = require('./mediaLog');
 
 // Sites the bot will fetch from, each with its own fetcher. Add a site by adding an entry.
 // Only listed sites are accepted so arbitrary URLs (e.g. LAN addresses) are never requested.
@@ -69,7 +70,8 @@ function isOnlyMediaUrls(text) {
 	return tokens.length > 0 && tokens.every((token) => findSupportedSite(token));
 }
 
-// Fetches a supported link into a fresh temp dir. Caller must call cleanup() when done.
+// Fetches a supported link into a fresh temp dir. Caller must call cleanup() when done, and can
+// log later steps (uploading) under the same job with the returned log.
 // onStage is called with 'downloading' and (if needed) 'compressing' as the work progresses.
 async function downloadMedia(url, maxBytes, onStage) {
 	const site = findSupportedSite(url);
@@ -79,12 +81,21 @@ async function downloadMedia(url, maxBytes, onStage) {
 
 	const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'media-'));
 	const cleanup = () => fs.rm(dir, { recursive: true, force: true });
+	const job = createJob(site.name);
+	const log = jobLogger(job);
 
 	try {
-		const result = await site.fetch(url, dir, maxBytes, onStage);
-		return { ...result, site: site.name, cleanup };
+		log.info(`start ${url} (upload limit ${formatMb(maxBytes)})`);
+		const result = await runInJob(job, () => site.fetch(url, dir, maxBytes, onStage));
+		const sizes = await Promise.all(result.files.map((file) => fs.stat(file.path).then((stat) => stat.size)));
+		log.info(
+			`parsed: ${result.files.length} file(s), ${formatMb(sizes.reduce((a, b) => a + b, 0))}` +
+				`${result.compressed ? ', compressed' : ''}${result.note ? `, note "${result.note}"` : ''}`,
+		);
+		return { ...result, site: site.name, log, cleanup };
 	}
 	catch (error) {
+		log.warn(`failed: ${error.message}`);
 		await cleanup();
 		if (error.code === 'VIDEO_TOO_LONG') {
 			// Space out Latin names ("到 TikTok 观看") but not Chinese ones ("到小红书观看").

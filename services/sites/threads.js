@@ -2,6 +2,7 @@ const fs = require('node:fs/promises');
 const path = require('node:path');
 const { fitVideoToLimit } = require('./video');
 const { downloadToFile, imageExtension } = require('./download');
+const { mediaLog, formatMb } = require('../mediaLog');
 
 // Threads has no yt-dlp extractor and its pages are a login shell, but the web app's own
 // endpoints answer logged-out requests (the approach vxThreads uses):
@@ -26,6 +27,7 @@ const POST_PATH_PATTERN = /^\/@[\w.]+\/post\/[\w-]+/;
 const MEDIA_URL_PATTERN = /^https:\/\/[\w.-]+\.(?:cdninstagram\.com|fbcdn\.net)\//i;
 
 let cachedConfig = null;
+let pendingConfig = null;
 
 function request(url, options = {}) {
 	return fetch(url, {
@@ -101,9 +103,23 @@ async function discoverQueryConfig(postPath) {
 	return { ...found, lsd, expiresAt: Date.now() + CONFIG_TTL_MS };
 }
 
+async function loadQueryConfig(postPath) {
+	const startedAt = Date.now();
+	const config = await discoverQueryConfig(postPath);
+	mediaLog.info(
+		`read query config from bundles in ${((Date.now() - startedAt) / 1000).toFixed(1)}s: ` +
+			`doc id ${config.docId}, ${config.providers.length} variables`,
+	);
+	return config;
+}
+
+// Links arriving together share one discovery instead of each scanning the bundles.
 async function getQueryConfig(postPath, refresh) {
 	if (refresh || !cachedConfig || cachedConfig.expiresAt < Date.now()) {
-		cachedConfig = await discoverQueryConfig(postPath);
+		pendingConfig ??= loadQueryConfig(postPath).finally(() => {
+			pendingConfig = null;
+		});
+		cachedConfig = await pendingConfig;
 	}
 	return cachedConfig;
 }
@@ -153,14 +169,16 @@ async function queryPost(postId, config) {
 
 async function fetchPost(url) {
 	const postPath = await resolvePostPath(url);
+	mediaLog.info(`post path ${postPath}`);
 	const config = await getQueryConfig(postPath, false);
 	const postId = await fetchPostId(postPath, config.lsd);
+	mediaLog.info(`post id ${postId}`);
 	try {
 		return await queryPost(postId, config);
 	}
 	catch (error) {
 		// Most likely Threads shipped a new doc id or variables: re-read the bundles and retry once.
-		console.warn(`${error.message}; refreshing the Threads query config.`);
+		mediaLog.warn(`${error.message}; refreshing the query config`);
 		return queryPost(postId, await getQueryConfig(postPath, true));
 	}
 }
@@ -212,6 +230,10 @@ async function fetchThreadsPost(url, dir, maxBytes, onStage) {
 		text: textParts.filter(Boolean).join('\n\n'),
 		compressed: false,
 	};
+	mediaLog.info(
+		`post by ${result.author || '?'}: ${source ? `${source.carousel_media?.length || 1} media item(s)` : 'text only'}` +
+			`${source && source === quoted ? ' from the quoted post' : ''}`,
+	);
 	if (!source) return result;
 
 	onStage?.('downloading');
@@ -236,7 +258,10 @@ async function fetchThreadsPost(url, dir, maxBytes, onStage) {
 		const file = await downloadItem(item, dir, index + 1);
 		if (!file) continue;
 		const { size } = await fs.stat(file.path);
-		if (totalBytes + size > maxBytes) continue;
+		if (totalBytes + size > maxBytes) {
+			mediaLog.info(`skipping item ${index + 1} (${formatMb(size)}): over the upload limit`);
+			continue;
+		}
 		totalBytes += size;
 		result.files.push(file);
 	}
