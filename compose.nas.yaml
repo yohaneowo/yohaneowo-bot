@@ -1,6 +1,10 @@
 # Compose file for the NAS: pulls the published image instead of building.
 # Put it next to the stable .env and run `docker compose -f compose.nas.yaml up -d`
 # (or create a Container Manager project from it).
+#
+# The bots report groups, logs and total assets to yohaneowo-admin over its Docker network
+# (yohaneowo-admin/docker/nas). Start the admin first: this file joins its network, so the
+# bots fail to start while it is missing. Set ADMIN_API_TOKEN in .env to the admin's BOT_API_TOKEN.
 services:
     portfolio-bot:
         image: yohane0w0/yohaneowo-bot:latest
@@ -12,8 +16,12 @@ services:
             - bot-data:/app/data
         env_file:
             - .env
-        environment: &xhs_env
+        environment: &bot_env
             XHS_API_URL: http://xhs-downloader:5556
+            ADMIN_API_URL: http://yohaneowo-admin-web
+        networks: &bot_networks
+            - default
+            - admin
         logging: &logging
             driver: json-file
             options:
@@ -29,7 +37,8 @@ services:
         command: ['node', 'line.js']
         env_file:
             - .env
-        environment: *xhs_env
+        environment: *bot_env
+        networks: *bot_networks
         logging: *logging
 
     # Xiaohongshu note lookups (https://github.com/JoeanAmier/XHS-Downloader). Internal only:
@@ -55,3 +64,9 @@ services:
 
 volumes:
     bot-data:
+
+networks:
+    # Created by yohaneowo-admin's compose; the admin answers here as yohaneowo-admin-web.
+    admin:
+        name: yohaneowo-admin
+        external: true
