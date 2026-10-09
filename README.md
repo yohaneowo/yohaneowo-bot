@@ -16,6 +16,7 @@
   | 小红书 | 影片笔记（720p，超过上限就压缩）；图文笔记回复"暂未开放" | [XHS-Downloader](https://github.com/JoeanAmier/XHS-Downloader) 的 API |
   | YouTube | 只支持 Shorts（`youtube.com/shorts/…`），影像和声音分开下载再合并，最高 1080p | yt-dlp（用 Node 作为 JS 执行环境） |
   | Threads | 文字、图片、影片、多图贴文（最多 10 个），引用贴文会显示被引用的影片和图片 | Threads 网页自己用的 GraphQL 接口，不需要登录 |
+  | X（Twitter） | 文字、图片（原图）、影片（选上限内最高画质）、多媒体贴文（最多 4 个），引用贴文会显示被引用的媒体；敏感内容以 Spoiler 发送。也接受 fxtwitter / vxtwitter / fixupx 链接 | X 嵌入推文用的 syndication 接口，不需要登录；拿不到时改用 yt-dlp |
 
   Threads 没有 yt-dlp 解析器，bot 直接调用 Threads 网页使用的接口（做法参考 [vxThreads](https://github.com/everettsouthwick/vxThreads)）。接口需要的查询 ID 和参数会随着 Threads 更新而改变，所以 bot 会从 Threads 的网页脚本中自动读取，缓存 12 小时，查询失败时重新读取。
 
@@ -26,6 +27,8 @@
   Instagram 的限制：有年龄或受众限制的内容需要登录才能看，bot 不登录，所以只显示封面并标注"无法下载影片"。Instagram 对未登录的请求有频率限制，短时间内解析太多会被暂时挡住。
 
   小红书：App 分享出来的链接没有 `xsec_token`，网页版和 yt-dlp 都会被导到登录页。所以另外跑一个 XHS-Downloader 服务来取得笔记资料。它不需要登录，但没有 cookie 时影片只有 720p。NAS 上由 `compose.nas.yaml` 启动，开发时由 `npm run dev` 启动。
+
+  X 的限制：年龄限制和锁帐号的贴文，嵌入接口不会给资料，只能靠 yt-dlp 尝试下载影片，通常也会失败。
 
   支持的网站列在 `services/media.js` 的 `SUPPORTED_SITES`，每个网站在 `services/sites/` 里有自己的处理函数。
 

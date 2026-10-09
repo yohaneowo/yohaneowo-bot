@@ -7,6 +7,7 @@ const { fetchInstagramPost } = require('./sites/instagram');
 const { fetchXiaohongshuNote } = require('./sites/xiaohongshu');
 const { fetchYouTubeShort } = require('./sites/youtube');
 const { fetchThreadsPost } = require('./sites/threads');
+const { fetchXPost } = require('./sites/x');
 const { createJob, jobLogger, runInJob, formatMb } = require('./mediaLog');
 
 // Sites the bot will fetch from, each with its own fetcher. Add a site by adding an entry.
@@ -46,6 +47,13 @@ const SUPPORTED_SITES = [
 		name: 'Threads',
 		pattern: /^https?:\/\/(?:www\.)?threads\.(?:com|net)\/(?:@[\w.]+\/post\/[\w-]+|share\/[\w-]+)/i,
 		fetch: fetchThreadsPost,
+	},
+	{
+		name: 'X',
+		// Also the fxtwitter / vxtwitter / fixupx mirrors people share for better embeds.
+		pattern:
+			/^https?:\/\/(?:(?:www|mobile)\.)?(?:x|twitter|fxtwitter|vxtwitter|fixupx|fixvx)\.com\/(?:\w{1,15}|i(?:\/web)?)\/status(?:es)?\/\d+/i,
+		fetch: fetchXPost,
 	},
 ];
 
