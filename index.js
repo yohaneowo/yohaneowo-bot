@@ -6,6 +6,7 @@ const { Client, Collection, Events, GatewayIntentBits, MessageFlags, Partials } 
 const { getPortfolioSnapshot, createPortfolioEmbed } = require('./services/portfolio');
 const { extractMediaUrls, isOnlyMediaUrls } = require('./services/media');
 const { setupVoiceHubs } = require('./services/voiceHubs');
+const { setupVoiceLog } = require('./services/voiceLog');
 const {
 	INITIAL_STATUS,
 	isMediaQueueFull,
@@ -55,6 +56,7 @@ if (mediaAutoDownloadEnabled) {
 // Create a new client instance
 const client = new Client({ intents: clientIntents, partials: clientPartials });
 setupVoiceHubs(client);
+setupVoiceLog(client);
 let lastStatusNotificationAt = 0;
 let isSendingStatusNotification = false;
 

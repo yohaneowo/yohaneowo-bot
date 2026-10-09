@@ -157,7 +157,12 @@ function setupVoiceHubs(client) {
 	client.on(Events.ChannelDelete, (channel) => forget(channel.id));
 }
 
+function isHub(channelId) {
+	return hubs.has(channelId);
+}
+
 module.exports = {
 	setupVoiceHubs,
 	createHub,
+	isHub,
 };

@@ -16,13 +16,13 @@ const LOG_RETRY_MS = 30 * 1000;
 const LOG_BATCH_SIZE = 500;
 const LOG_QUEUE_LIMIT = 5000;
 const MAX_LOG_TEXT_LENGTH = 10000;
-const LOG_PATHS = { parse: '/parse-log/report', runtime: '/runtime-log/report' };
+const LOG_PATHS = { parse: '/parse-log/report', runtime: '/runtime-log/report', voice: '/voice-session/report' };
 
 const enabled = Boolean(ADMIN_API_URL && ADMIN_API_TOKEN);
 const lastActivityAt = new Map();
 // Which site's link is being parsed, so runtime logs printed along the way can be filtered by site.
 const logScope = new AsyncLocalStorage();
-const logQueues = { parse: [], runtime: [] };
+const logQueues = { parse: [], runtime: [], voice: [] };
 let flushTimer = null;
 let flushing = null;
 
@@ -176,6 +176,18 @@ function withLogSite(site, fn) {
 	return logScope.run({ site: site ?? null }, fn);
 }
 
+// session: { guild_external_id, channel_external_id, channel_name, user_external_id, user_name, user_avatar_url,
+//            joined_at, joined_time_estimated, left_at, duration_seconds, end_reason: 'leave' | 'move' | 'restart' }
+function reportVoiceSession(session) {
+	enqueueLog('voice', {
+		...session,
+		channel_name: session.channel_name.slice(0, 100),
+		user_name: session.user_name?.slice(0, 128) ?? null,
+		// Avatar URLs are well under the 512 limit; drop one that somehow isn't rather than lose the entry.
+		user_avatar_url: session.user_avatar_url?.length <= 512 ? session.user_avatar_url : null,
+	});
+}
+
 // Mirrors console.log/info/warn/error into the runtime log. source is 'discord' or 'line'.
 // The console still prints as before, so `docker logs` keeps the full output.
 function installConsoleCapture(source) {
@@ -212,6 +224,7 @@ module.exports = {
 	reportLeave,
 	reportActivity,
 	reportParse,
+	reportVoiceSession,
 	reportPortfolio,
 	withLogSite,
 	installConsoleCapture,

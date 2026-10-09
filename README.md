@@ -173,7 +173,7 @@ tunnel 有两种模式，由 `.env.dev` 决定：
 | `XHS_API_URL` | | XHS-Downloader 的网址。NAS 的 compose 已经设好；开发时不设的话，`npm run dev` 会自动启动一个 |
 | `FFPROBE_PATH` | | 默认使用 PATH 里的 `ffprobe`，用来读取影片长度 |
 | `CLOUDFLARE_TUNNEL_TOKEN` | NAS | `compose.nas.yaml` 里的 cloudflared 会用到 |
-| `ADMIN_API_URL` | | yohaneowo-admin 后端的网址，例如 `http://localhost:8001`；设了才会把所在的服务器、群组和活动时间上报给后台 |
+| `ADMIN_API_URL` | | yohaneowo-admin 后端的网址，例如 `http://localhost:8001`；设了才会把所在的服务器、群组、活动时间、解析与运行日志、资产快照和语音停留记录（谁在哪个语音频道待了多久）上报给后台 |
 | `ADMIN_API_TOKEN` | | 跟 admin 的 `BOT_API_TOKEN` 填同一个值 |
 | `DATA_DIR` | | 存放需要保留的资料（动态语音频道），默认是项目下的 `data/`。Docker 里是 `/app/data`，由 compose 的 `bot-data` volume 保存 |
 
