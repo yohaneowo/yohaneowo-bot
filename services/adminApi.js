@@ -1,4 +1,5 @@
-// Reports groups, activity and logs to yohaneowo-admin's internal API (/api/v1/bot/internal/*).
+// Reports groups, activity and logs to yohaneowo-admin's internal API (/api/v1/bot/internal/*,
+// plus /api/v1/project/internal/* for the dependency list).
 // Off unless ADMIN_API_URL and ADMIN_API_TOKEN are set. Every call is best-effort: when the
 // admin is down the bot logs a warning and carries on, it never waits on or fails because of it.
 const util = require('node:util');
@@ -34,7 +35,9 @@ const warn = console.warn.bind(console);
 // retrying the same thing would never succeed.
 async function send(path, body) {
 	try {
-		const response = await fetch(`${ADMIN_API_URL}/api/v1/bot/internal${path}`, {
+		// Paths starting with /api/ are used as-is; the rest are under the bot's internal API.
+		const url = path.startsWith('/api/') ? path : `/api/v1/bot/internal${path}`;
+		const response = await fetch(`${ADMIN_API_URL}${url}`, {
 			method: 'POST',
 			headers: { 'Content-Type': 'application/json', 'X-Bot-Token': ADMIN_API_TOKEN },
 			body: JSON.stringify(body),
@@ -109,6 +112,20 @@ function reportPortfolio(snapshot) {
 		})),
 		failures: snapshot.failures ?? [],
 		occurred_at: snapshot.generatedAt,
+	});
+}
+
+// The whole dependency list of this project (services/dependencies.js). The admin replaces its
+// copy with it and then checks every entry upstream.
+function reportDependencies(project, dependencies) {
+	return post('/api/v1/project/internal/dependency/report', {
+		project,
+		// One over-long field would get the whole list rejected; tool version strings can be long.
+		dependencies: dependencies.map((dep) => ({
+			...dep,
+			usage: dep.usage?.slice(0, 255) ?? null,
+			installed_version: dep.installed_version?.slice(0, 64) ?? null,
+		})),
 	});
 }
 
@@ -226,6 +243,7 @@ module.exports = {
 	reportParse,
 	reportVoiceSession,
 	reportPortfolio,
+	reportDependencies,
 	withLogSite,
 	installConsoleCapture,
 };

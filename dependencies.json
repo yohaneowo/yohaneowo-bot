@@ -1,0 +1,34 @@
+{
+	"$comment": "报给 yohaneowo-admin「项目依赖」的清单。package.json 的套件会自动带上，这里只写用途；critical 是重点依赖（坏了影响最大，总览会特别提醒）；外部服务（另外的容器、上游项目）列在 external，分类默认「外部服务」。kind: npm / pypi / github / docker / none",
+	"critical": ["discord.js", "@line/bot-sdk", "yt-dlp"],
+	"npm": {
+		"@line/bot-sdk": "LINE bot",
+		"ccxt": "交易所资产查询（/portfolio、日报、首页总资产）",
+		"discord.js": "Discord bot",
+		"express": "LINE webhook 与对外的媒体文件服务",
+		"node-cron": "每日资产报告排程"
+	},
+	"external": [
+		{
+			"name": "XHS-Downloader",
+			"kind": "github",
+			"source": "JoeanAmier/XHS-Downloader",
+			"usage": "小红书笔记解析（独立容器，上游项目）",
+			"critical": true
+		},
+		{
+			"name": "XHS-Downloader 镜像",
+			"kind": "docker",
+			"source": "joeanamier/xhs-downloader:latest",
+			"usage": "NAS 上跑的小红书服务镜像",
+			"critical": true
+		},
+		{
+			"name": "cloudflared",
+			"kind": "docker",
+			"source": "cloudflare/cloudflared:latest",
+			"usage": "LINE webhook 用的 Cloudflare Tunnel",
+			"critical": true
+		}
+	]
+}

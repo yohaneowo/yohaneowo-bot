@@ -22,8 +22,10 @@ const {
 	reportLeave,
 	reportActivity,
 	reportPortfolio,
+	reportDependencies,
 	installConsoleCapture,
 } = require('./services/adminApi');
+const { collectDependencies } = require('./services/dependencies');
 
 installConsoleCapture('discord');
 
@@ -31,6 +33,8 @@ installConsoleCapture('discord');
 const ADMIN_SYNC_INTERVAL_MS = 60 * 60 * 1000;
 // Total assets shown on the admin home page; every report is kept as history.
 const ADMIN_PORTFOLIO_INTERVAL_MS = 15 * 60 * 1000;
+// The admin checks dependencies upstream each time the list arrives, so this is the daily check.
+const ADMIN_DEPENDENCY_INTERVAL_MS = 24 * 60 * 60 * 1000;
 
 const statusNotifyUserId = process.env.MASTER_ID || process.env.DISCORD_STATUS_NOTIFY_USER_ID;
 const statusNotificationCooldownMs = 3 * 60 * 60 * 1000;
@@ -106,6 +110,15 @@ async function reportPortfolioToAdmin() {
 	}
 }
 
+async function reportDependenciesToAdmin() {
+	try {
+		await reportDependencies('yohaneowo-bot', await collectDependencies());
+	}
+	catch (error) {
+		console.warn('Dependency report to the admin failed:', error.message);
+	}
+}
+
 async function syncGuildsToAdmin() {
 	const guilds = client.guilds.cache.filter((guild) => guild.available);
 	const synced = await syncGroups('discord', guilds.map(toAdminGroup));
@@ -128,6 +141,8 @@ client.once(Events.ClientReady, async (readyClient) => {
 		setInterval(syncGuildsToAdmin, ADMIN_SYNC_INTERVAL_MS).unref();
 		reportPortfolioToAdmin();
 		setInterval(reportPortfolioToAdmin, ADMIN_PORTFOLIO_INTERVAL_MS).unref();
+		reportDependenciesToAdmin();
+		setInterval(reportDependenciesToAdmin, ADMIN_DEPENDENCY_INTERVAL_MS).unref();
 	}
 
 	const cronExpression = process.env.PORTFOLIO_CRON || '0 9 * * *';
