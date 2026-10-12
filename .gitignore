@@ -4,3 +4,4 @@ node_modules
 !.env.example
 config.json
 data
+CLAUDE.local.md
