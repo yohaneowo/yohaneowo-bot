@@ -36,6 +36,26 @@
   有人进入入口，bot 会在同一个分类开一个「<名字> 的频道」（不限人数，权限跟随分类）并把人移过去；这个频道没人后 10 秒自动删除。
   不需要入口时直接删除那个频道即可。入口和临时频道记在 `data/voice-hubs.json`，bot 重启后会继续管理，离线期间空掉的频道也会在启动后删除。
 
+- **电影推荐**：用 `/movie subscribe trakt:<Trakt 个人页链接> region:TW` 订阅：贴 Trakt App「分享个人资料」的网址（例如 `https://app.trakt.tv/profile/...`）或填用户名都可以，帐号需公开。每天早上 10 点（台湾时间）：
+  1. 之前以「即将上映」推荐过、现在上映了的电影，加进今天的提醒；
+  2. 该地区正在上映、还没判断过的电影，用规则（类型兴趣、评分偏好、喜欢的导演与演员、口碑、热门度）排出最合适的几部；
+  3. 新出现的即将上映电影也一样排名；
+  4. 两类各取前 6 部交给 AI（默认 Claude Sonnet）判断要不要推荐、写理由。每部候选会附上你看过的作品里最像的 5 部（含剧集，用 Voyage 内容向量找出）和片中你评价很高的导演、主演。
+  5. 当天的结果合成一则私信（Discord 新版排版），每部片一块：海报、理由、上映日期等资料一行；如果推荐重点是你喜欢的导演或演员，会附上照片和你给过他们作品的评分。
+
+  卡片上会标出这部片做过的特殊版本（IMAX、IMAX 摄影机拍摄、杜比影院、4DX、ScreenX、3D 等）。资料来自英文维基百科提到版本的句子，由 AI 判断哪些是正式发行的版本，不凭 AI 的记忆；维基没写的片（中小型片、很多亚洲片）就不显示。显示的是「做过这些版本」，不代表你所在的地区一定有上映。
+
+  「💬 AI 怎么看」按钮：回答卡片上没有的内容（可能踩雷的地方、需不需要先看前作、影评与观众评价，以及导演和主演其他作品你给过的分数）。资料来自 TMDB（系列、观众评论）和维基百科的「制作」「评价」段落，AI 不凭记忆回答、不剧透；只有按的人看得到，同一部片 24 小时内再按会显示同一个答案，每人每天最多 20 次（`MOVIE_ASK_PER_DAY`）。
+
+  看过的电影不会再推荐，只有一个例外：**重映**。你评过高分（9 分以上，且比你的平均分高 0.5 分以上）的电影重新上映时，会用 🔁 卡片通知你，理由就是你当初的评分，不经过 AI，也不占每日额度。
+  按「看过了」时，会到 Trakt 查你有没有评分；没有的话会吐槽一下，并附上 Trakt 的评分链接（只有你看得到）。
+
+  已上映和即将上映的推荐各自每天最多 3 部（`MOVIE_MAX_PER_DAY`），上映提醒不算在内。每部电影只判断一次，结果记在 `data/movies.json`。
+  每部片底下有「想看 / 没兴趣 / 看过了」按钮（还没上映的没有「看过了」），之后的判断会参考；按了「没兴趣」或「看过了」就不会再提醒。
+  其他指令：`/movie status`（订阅设定与最近推荐）、`/movie check`（马上检查一次，10 分钟一次）、`/movie unsubscribe`。
+  没设 `ANTHROPIC_API_KEY` 时只用规则判断，理由会比较制式；没设 `VOYAGE_API_KEY` 时 AI 少了「最像的作品」这份参考。
+  内容向量只用来找相似作品，不用在排名：用真实的观看记录实测过，向量排名没有比规则准，但它找出的相似作品（同系列、同导演、动画的剧集版）很准。
+
 ## Discord 设置
 
 ### Intent（Developer Portal → Bot → Privileged Gateway Intents）
@@ -175,7 +195,16 @@ tunnel 有两种模式，由 `.env.dev` 决定：
 | `CLOUDFLARE_TUNNEL_TOKEN` | NAS | `compose.nas.yaml` 里的 cloudflared 会用到 |
 | `ADMIN_API_URL` | | yohaneowo-admin 后端的网址，例如 `http://localhost:8001`；设了才会把所在的服务器、群组、活动时间、解析与运行日志、资产快照和语音停留记录（谁在哪个语音频道待了多久）上报给后台 |
 | `ADMIN_API_TOKEN` | | 跟 admin 的 `BOT_API_TOKEN` 填同一个值 |
-| `DATA_DIR` | | 存放需要保留的资料（动态语音频道），默认是项目下的 `data/`。Docker 里是 `/app/data`，由 compose 的 `bot-data` volume 保存 |
+| `TMDB_API_TOKEN` | 电影 ✅ | TMDB 的 API Key 或 API Read Access Token 都可以（themoviedb.org → 设置 → API），用来查上映片单与电影资料 |
+| `TRAKT_CLIENT_ID` | 电影 ✅ | Trakt app 的 Client ID（trakt.tv/oauth/applications），读取公开帐号的观看记录 |
+| `ANTHROPIC_API_KEY` | | 设了才用 AI 判断与写推荐理由 |
+| `MOVIE_AI_MODEL` | | 默认 `claude-sonnet-5-5`；想省钱可以改成 `claude-haiku-4-5-20251001`（判断较不稳定） |
+| `VOYAGE_API_KEY` | | Voyage AI 的 key，用来生成电影/剧集的内容向量（找相似作品）。免费帐号每分钟约 1 万 token，新订阅者第一次要生成整份观看记录，可能要十几分钟 |
+| `MOVIE_EMBEDDING_MODEL` | | 默认 `voyage-3.5` |
+| `MOVIE_CRON` / `MOVIE_TIMEZONE` | | 每天检查的时间，默认 `0 10 * * *`、`Asia/Taipei` |
+| `MOVIE_MAX_PER_DAY` | | 已上映与即将上映各自每天最多推荐几部，默认 `3` |
+| `MOVIE_LANGUAGE` | | TMDB 片名与简介的语言，默认 `zh-TW` |
+| `DATA_DIR` | | 存放需要保留的资料（动态语音频道、电影推荐），默认是项目下的 `data/`。Docker 里是 `/app/data`，由 compose 的 `bot-data` volume 保存 |
 
 > 测试版的 `PORTFOLIO_CHANNEL_ID` 和 `MASTER_ID` 建议留空或改成测试用的值，否则两个 bot 会重复发送日报和私信。
 

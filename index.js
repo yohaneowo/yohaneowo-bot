@@ -7,6 +7,7 @@ const { getPortfolioSnapshot, createPortfolioEmbed } = require('./services/portf
 const { extractMediaUrls, isOnlyMediaUrls } = require('./services/media');
 const { setupVoiceHubs } = require('./services/voiceHubs');
 const { setupVoiceLog } = require('./services/voiceLog');
+const { moviesEnabled, runDaily: runDailyMovies, handleFeedbackButton } = require('./services/movies/recommender');
 const {
 	INITIAL_STATUS,
 	isMediaQueueFull,
@@ -154,6 +155,13 @@ client.once(Events.ClientReady, async (readyClient) => {
 		{ timezone: 'Asia/Shanghai' },
 	);
 
+	if (moviesEnabled) {
+		cron.schedule(process.env.MOVIE_CRON || '0 10 * * *', () => runDailyMovies(readyClient), {
+			timezone: process.env.MOVIE_TIMEZONE || 'Asia/Taipei',
+		});
+		console.log('Daily movie recommendations are enabled.');
+	}
+
 	if (process.env.SEND_PORTFOLIO_ON_BOOT === 'true') {
 		await sendDailyPortfolioReport();
 	}
@@ -270,6 +278,17 @@ for (const folder of commandFolders) {
 }
 
 client.on(Events.InteractionCreate, async (interaction) => {
+	if (interaction.isAutocomplete()) {
+		await interaction.client.commands
+			.get(interaction.commandName)
+			?.autocomplete?.(interaction)
+			.catch((error) => console.warn(`Autocomplete for /${interaction.commandName} failed:`, error.message));
+		return;
+	}
+	if (interaction.isButton() && interaction.customId.startsWith('movie:')) {
+		await handleFeedbackButton(interaction).catch((error) => console.warn('[movie] Feedback button failed:', error.message));
+		return;
+	}
 	if (!interaction.isChatInputCommand() && !interaction.isMessageContextMenuCommand()) return;
 	if (interaction.guildId) reportActivity('discord', interaction.guildId);
 	const command = interaction.client.commands.get(interaction.commandName);
