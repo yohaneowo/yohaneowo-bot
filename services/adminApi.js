@@ -17,13 +17,19 @@ const LOG_RETRY_MS = 30 * 1000;
 const LOG_BATCH_SIZE = 500;
 const LOG_QUEUE_LIMIT = 5000;
 const MAX_LOG_TEXT_LENGTH = 10000;
-const LOG_PATHS = { parse: '/parse-log/report', runtime: '/runtime-log/report', voice: '/voice-session/report' };
+const LOG_PATHS = {
+	parse: '/parse-log/report',
+	runtime: '/runtime-log/report',
+	voice: '/voice-session/report',
+	// The AI call log lives in the admin's own plugin (AI管理), not under the bot's API.
+	ai: '/api/v1/ai_usage/internal/call/report',
+};
 
 const enabled = Boolean(ADMIN_API_URL && ADMIN_API_TOKEN);
 const lastActivityAt = new Map();
 // Which site's link is being parsed, so runtime logs printed along the way can be filtered by site.
 const logScope = new AsyncLocalStorage();
-const logQueues = { parse: [], runtime: [], voice: [] };
+const logQueues = { parse: [], runtime: [], voice: [], ai: [] };
 let flushTimer = null;
 let flushing = null;
 
@@ -205,6 +211,16 @@ function reportVoiceSession(session) {
 	});
 }
 
+// call: see services/aiUsage.js. Strings are clipped to the admin's column sizes.
+function reportAiCall(call) {
+	enqueueLog('ai', {
+		...call,
+		user_name: call.user_name?.slice(0, 128) ?? null,
+		user_avatar_url: call.user_avatar_url?.length <= 512 ? call.user_avatar_url : null,
+		error_message: truncate(call.error_message),
+	});
+}
+
 // Mirrors console.log/info/warn/error into the runtime log. source is 'discord' or 'line'.
 // The console still prints as before, so `docker logs` keeps the full output.
 function installConsoleCapture(source) {
@@ -242,6 +258,7 @@ module.exports = {
 	reportActivity,
 	reportParse,
 	reportVoiceSession,
+	reportAiCall,
 	reportPortfolio,
 	reportDependencies,
 	withLogSite,
