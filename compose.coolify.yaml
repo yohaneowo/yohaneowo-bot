@@ -1,0 +1,47 @@
+# Compose file for Coolify (Docker Compose build pack): both bots are built from this repo on push.
+# Coolify sets DOPPLER_TOKEN (Doppler yohaneowo-bot / prd service token) and ADMIN_API_URL in its
+# environment panel; everything else comes from Doppler. The LINE bot gets the public domain
+# (line.yohaneowo.com) through Coolify's proxy, so no cloudflared runs in this stack: the VM has
+# one tunnel for all projects.
+services:
+    portfolio-bot:
+        build: .
+        restart: unless-stopped
+        init: true
+        # Dynamic voice channel state and the movie recommender's data; survives rebuilds.
+        volumes:
+            - bot-data:/app/data
+        environment: &bot_env
+            DOPPLER_TOKEN: ${DOPPLER_TOKEN}
+            XHS_API_URL: http://xhs-downloader:5556
+            # yohaneowo-admin's nginx on the shared `coolify` network (see its docker/coolify/compose.yaml).
+            ADMIN_API_URL: ${ADMIN_API_URL:-http://yohaneowo-admin-web}
+        networks:
+            - default
+            - coolify
+
+    # LINE webhook + media server; Coolify routes the public hostname to port 8787.
+    line-bot:
+        build: .
+        restart: unless-stopped
+        init: true
+        command: ['node', 'line.js']
+        environment:
+            <<: *bot_env
+            SERVICE_FQDN_LINEBOT_8787: ''
+        networks:
+            - default
+            - coolify
+
+    # Xiaohongshu note lookups (https://github.com/JoeanAmier/XHS-Downloader). Internal only.
+    xhs-downloader:
+        image: joeanamier/xhs-downloader:latest
+        restart: unless-stopped
+        command: ['python', 'main.py', 'api']
+
+volumes:
+    bot-data:
+
+networks:
+    coolify:
+        external: true
