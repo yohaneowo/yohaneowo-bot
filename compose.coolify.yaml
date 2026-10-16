@@ -26,6 +26,9 @@ services:
         restart: unless-stopped
         init: true
         command: ['node', 'line.js']
+        # Coolify reads the proxy port from here (the image declares no EXPOSE).
+        expose:
+            - '8787'
         environment:
             <<: *bot_env
             SERVICE_FQDN_LINEBOT_8787: ''
