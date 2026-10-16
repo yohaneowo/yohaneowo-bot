@@ -18,6 +18,11 @@ COPY --chown=node:node . .
 # Persistent state (dynamic voice channels); compose mounts a volume here.
 RUN mkdir -p /app/data && chown node:node /app/data
 
+# Secrets come from Doppler at start when DOPPLER_TOKEN (a service token for the prd config) is
+# set; without it the container uses its plain environment (env_file in the dev compose files).
+COPY --from=dopplerhq/cli:3 /bin/doppler /usr/local/bin/doppler
+
 USER node
 
+ENTRYPOINT ["/bin/sh", "-c", "if [ -n \"$DOPPLER_TOKEN\" ]; then exec doppler run -- \"$@\"; else exec \"$@\"; fi", "--"]
 CMD ["node", "index.js"]

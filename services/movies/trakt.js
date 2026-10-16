@@ -1,32 +1,28 @@
 // Trakt: a public user's watched movies and ratings. Public profiles only need the app's
-// Client ID (no OAuth); private profiles answer 401/403.
-const API_URL = 'https://api.trakt.tv';
-const TRAKT_CLIENT_ID = process.env.TRAKT_CLIENT_ID ?? '';
-const REQUEST_TIMEOUT_MS = 20 * 1000;
+// Client ID (no OAuth); private profiles answer 401/403. Requests go through admin
+// (POST /sources/trakt), which holds the Client ID and counts usage.
+const { movieRequest, adminApiEnabled } = require('../adminApi');
+
+const REQUEST_TIMEOUT_MS = 30 * 1000;
 // Lists like /watched come back 100 items per page; follow the pages up to this many.
 const PAGE_LIMIT = 100;
 const MAX_PAGES = 50;
 
 class TraktUserError extends Error {}
 
+// { pageCount, body } of one GET; path may carry a query string.
 async function request(path) {
-	const response = await fetch(`${API_URL}${path}`, {
-		headers: {
-			'Content-Type': 'application/json',
-			'trakt-api-version': '2',
-			'trakt-api-key': TRAKT_CLIENT_ID,
-			'User-Agent': 'yohaneowo-bot',
-		},
-		signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
-	});
-	if (response.status === 404) throw new TraktUserError('找不到这个 Trakt 用户');
-	if (response.status === 401 || response.status === 403) throw new TraktUserError('这个 Trakt 帐号不是公开的');
-	if (!response.ok) throw new Error(`Trakt ${path} returned HTTP ${response.status}`);
-	return response;
+	const [pathname, query = ''] = path.split('?');
+	const params = Object.fromEntries(new URLSearchParams(query));
+	const { status, pageCount, body } = await movieRequest('POST', '/sources/trakt', { path: pathname, params }, REQUEST_TIMEOUT_MS);
+	if (status === 404) throw new TraktUserError('找不到这个 Trakt 用户');
+	if (status === 401 || status === 403) throw new TraktUserError('这个 Trakt 帐号不是公开的');
+	if (status < 200 || status >= 300) throw new Error(`Trakt ${pathname} returned HTTP ${status}`);
+	return { pageCount, body };
 }
 
 async function trakt(path) {
-	return (await request(path)).json();
+	return (await request(path)).body;
 }
 
 // Every item of a list, across pages. Paginated lists say so in X-Pagination-Page-Count;
@@ -35,8 +31,10 @@ async function traktAll(path) {
 	const items = [];
 	for (let page = 1; page <= MAX_PAGES; page++) {
 		const response = await request(`${path}${path.includes('?') ? '&' : '?'}page=${page}&limit=${PAGE_LIMIT}`);
-		items.push(...(await response.json()));
-		if (page >= Number(response.headers.get('x-pagination-page-count') ?? 1)) break;
+		items.push(...response.body);
+		const pageCount = response.pageCount ?? 1;
+		if (pageCount > MAX_PAGES) throw new TraktUserError('观看记录超过当前同步上限，未保存不完整统计');
+		if (page >= pageCount) break;
 	}
 	return items;
 }
@@ -120,7 +118,7 @@ async function fetchMovieStatus(userSlug, tmdbId) {
 }
 
 module.exports = {
-	traktEnabled: Boolean(TRAKT_CLIENT_ID),
+	traktEnabled: adminApiEnabled,
 	fetchMovieStatus,
 	TraktUserError,
 	parseTraktUser,

@@ -53,7 +53,7 @@
   已上映和即将上映的推荐各自每天最多 3 部（`MOVIE_MAX_PER_DAY`），上映提醒不算在内。每部电影只判断一次，结果记在 `data/movies.json`。
   每部片底下有「想看 / 没兴趣 / 看过了」按钮（还没上映的没有「看过了」），之后的判断会参考；按了「没兴趣」或「看过了」就不会再提醒。
   其他指令：`/movie status`（订阅设定与最近推荐）、`/movie check`（马上检查一次，10 分钟一次）、`/movie unsubscribe`。
-  没设 `ANTHROPIC_API_KEY` 时只用规则判断，理由会比较制式；没设 `VOYAGE_API_KEY` 时 AI 少了「最像的作品」这份参考。
+  admin 没设 `ANTHROPIC_API_KEY` 时只用规则判断，理由会比较制式；没设 `VOYAGE_API_KEY` 时 AI 少了「最像的作品」这份参考（AI 都经 admin 转发，key 在 admin）。
   内容向量只用来找相似作品，不用在排名：用真实的观看记录实测过，向量排名没有比规则准，但它找出的相似作品（同系列、同导演、动画的剧集版）很准。
 
 ## Discord 设置
@@ -155,9 +155,9 @@ LINE 不支持上传文件，只能由 LINE 从网址下载。所以 `line.js` �
 
 `npm run dev` 会同时启动 Discord bot、Cloudflare tunnel 和 LINE bot，并**自动把 LINE 的 Webhook URL 设好、验证通过**。需要先打开 Docker Desktop，因为 tunnel 是在 Docker 里跑的。
 
-tunnel 有两种模式，由 `.env.dev` 决定：
+tunnel 有两种模式，由 Doppler 的 `dev` 配置决定：
 
-| `.env.dev` | 公开网址 |
+| `dev` 配置 | 公开网址 |
 |---|---|
 | 有 `CLOUDFLARE_TUNNEL_TOKEN` | 固定网址，例如 `line-dev.yohaneowo.com`，就是 `LINE_PUBLIC_URL`。在 Cloudflare 建一个测试用的 tunnel，Public Hostname 指向 `http://host.docker.internal:8787` |
 | 没有 | 临时网址 `https://xxxx.trycloudflare.com`，每次启动都不同，自动当作 `LINE_PUBLIC_URL` 使用 |
@@ -168,7 +168,9 @@ tunnel 有两种模式，由 `.env.dev` 决定：
 
 ## 环境变量
 
-稳定版用 `.env`，测试版用 `.env.dev`。两个文件都已被 git 忽略。
+TMDB、Trakt、Anthropic、Voyage 的 key 都不在这里：电影功能的 TMDB / Trakt / Wikipedia 请求由 admin 代查（用量在 admin 的「接口管理 → 第三方接口」），Claude 与 Voyage 由 admin 的 AI 转发接口调用（记在「AI管理 → AI调用日志」）。Voyage 免费帐号每分钟约 1 万 token，新订阅者第一次要生成整份观看记录，可能要十几分钟。
+
+放在 Doppler 的 `yohaneowo-bot` 项目：稳定版用 `prd` 配置，测试版用 `dev` 配置。npm 脚本都包在 `doppler run` 里；新电脑先 `doppler login`，再在本目录 `doppler setup`。
 
 | 变量 | 必填 | 说明 |
 |---|---|---|
@@ -195,11 +197,7 @@ tunnel 有两种模式，由 `.env.dev` 决定：
 | `CLOUDFLARE_TUNNEL_TOKEN` | NAS | `compose.nas.yaml` 里的 cloudflared 会用到 |
 | `ADMIN_API_URL` | | yohaneowo-admin 后端的网址，例如 `http://localhost:8001`；设了才会把所在的服务器、群组、活动时间、解析与运行日志、资产快照和语音停留记录（谁在哪个语音频道待了多久）上报给后台 |
 | `ADMIN_API_TOKEN` | | 跟 admin 的 `BOT_API_TOKEN` 填同一个值 |
-| `TMDB_API_TOKEN` | 电影 ✅ | TMDB 的 API Key 或 API Read Access Token 都可以（themoviedb.org → 设置 → API），用来查上映片单与电影资料 |
-| `TRAKT_CLIENT_ID` | 电影 ✅ | Trakt app 的 Client ID（trakt.tv/oauth/applications），读取公开帐号的观看记录 |
-| `ANTHROPIC_API_KEY` | | 设了才用 AI 判断与写推荐理由 |
 | `MOVIE_AI_MODEL` | | 默认 `claude-sonnet-5-5`；想省钱可以改成 `claude-haiku-4-5-20251001`（判断较不稳定） |
-| `VOYAGE_API_KEY` | | Voyage AI 的 key，用来生成电影/剧集的内容向量（找相似作品）。免费帐号每分钟约 1 万 token，新订阅者第一次要生成整份观看记录，可能要十几分钟 |
 | `MOVIE_EMBEDDING_MODEL` | | 默认 `voyage-3.5` |
 | `MOVIE_CRON` / `MOVIE_TIMEZONE` | | 每天检查的时间，默认 `0 10 * * *`、`Asia/Taipei` |
 | `MOVIE_MAX_PER_DAY` | | 已上映与即将上映各自每天最多推荐几部，默认 `3` |
@@ -219,7 +217,7 @@ pip install -U "yt-dlp[default,curl-cffi]"
 ```bash
 npm install
 npm run deploy:dev   # 注册 slash 命令（只在新增或修改命令时需要）
-npm run dev          # 使用 .env.dev 启动 Discord + LINE（含 tunnel）
+npm run dev          # 使用 Doppler dev 配置启动 Discord + LINE（含 tunnel）
 ```
 
 ## 部署（稳定版，`main` 分支）
@@ -235,13 +233,13 @@ npm run dev          # 使用 .env.dev 启动 Discord + LINE（含 tunnel）
 
 指令会用**当前工作目录的代码**来 build，所以执行前要先切到对应的分支。
 
-NAS 上使用 `compose.nas.yaml`，它只拉镜像，不会构建。里面包含 Discord bot、LINE bot、cloudflared 和 XHS-Downloader 四个服务。把它和 `.env` 放在同一个文件夹，拉取新镜像后重启容器即可。
+NAS 上使用 `compose.nas.yaml`，它只拉镜像，不会构建。里面包含 Discord bot、LINE bot、cloudflared 和 XHS-Downloader 四个服务。同一个文件夹的 `.env` 只放两项：`DOPPLER_TOKEN`（Doppler `prd` 配置的 service token，容器启动时用它拿其余设置）和 `CLOUDFLARE_TUNNEL_TOKEN`（cloudflared 是官方镜像，读不到 Doppler）。拉取新镜像后重启容器即可；在 Doppler 改了值也要重启 bot 容器。
 
 ### NAS 上的测试版
 
 `compose.nas.dev.yaml` 和正式版的服务相同，但使用 `:dev` 镜像，容器名称都加上 `-dev`，可以和正式版同时运行。
 
-- 放在 NAS 上**另一个文件夹**，`.env` 填测试 bot 的设置（就是 `.env.dev` 的内容），`CLOUDFLARE_TUNNEL_TOKEN` 用测试 tunnel 的 token。
+- 放在 NAS 上**另一个文件夹**，`.env` 填测试 bot 的设置（Doppler `dev` 配置的内容，`ADMIN_API_URL` 改成电脑的局域网地址），`CLOUDFLARE_TUNNEL_TOKEN` 用测试 tunnel 的 token。这个 compose 没设 `DOPPLER_TOKEN`，所以容器直接用 `.env`。
 - 测试 tunnel 的路由（`line-dev.yohaneowo.com` → `host.docker.internal:8787`）不需要修改：compose 让 LINE bot 容器使用 `host.docker.internal` 这个别名，同一条路由在电脑和 NAS 上都能用。
 - **测试版在 NAS 上运行时，要关掉电脑上的 `npm run dev`**，因为两边用的是同一组测试 bot 的 token。
 注册稳定版的 slash 命令：`npm run deploy`。

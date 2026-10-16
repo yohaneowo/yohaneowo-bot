@@ -1,10 +1,12 @@
 # Compose file for the NAS: pulls the published image instead of building.
-# Put it next to the stable .env and run `docker compose -f compose.nas.yaml up -d`
-# (or create a Container Manager project from it).
+# Put it next to a .env holding DOPPLER_TOKEN (a service token for Doppler yohaneowo-bot / prd) and
+# CLOUDFLARE_TUNNEL_TOKEN, then run `docker compose -f compose.nas.yaml up -d`
+# (or create a Container Manager project from it). The bots read every other setting from Doppler.
+# Changed a value in Doppler? Restart the bot containers to pick it up.
 #
 # The bots report groups, logs and total assets to yohaneowo-admin over its Docker network
 # (yohaneowo-admin/docker/nas). Start the admin first: this file joins its network, so the
-# bots fail to start while it is missing. Set ADMIN_API_TOKEN in .env to the admin's BOT_API_TOKEN.
+# bots fail to start while it is missing. ADMIN_API_TOKEN in Doppler must equal the admin's BOT_API_TOKEN.
 services:
     portfolio-bot:
         image: yohane0w0/yohaneowo-bot:latest
@@ -14,9 +16,9 @@ services:
         # Dynamic voice channel state (/voice-hub); survives image updates.
         volumes:
             - bot-data:/app/data
-        env_file:
-            - .env
         environment: &bot_env
+            DOPPLER_TOKEN: ${DOPPLER_TOKEN:?Set DOPPLER_TOKEN in .env (Doppler yohaneowo-bot / prd service token)}
+            # Service addresses inside Docker stay here, not in Doppler.
             XHS_API_URL: http://xhs-downloader:5556
             ADMIN_API_URL: http://yohaneowo-admin-web
         networks: &bot_networks
@@ -35,8 +37,6 @@ services:
         restart: unless-stopped
         init: true
         command: ['node', 'line.js']
-        env_file:
-            - .env
         environment: *bot_env
         networks: *bot_networks
         logging: *logging

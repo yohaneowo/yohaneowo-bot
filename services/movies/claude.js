@@ -1,55 +1,27 @@
-const { recordAiCall } = require('../aiUsage');
+const { callAi, aiEnabled } = require('../aiUsage');
 
-// The movie features' Claude calls. Every call (failures too: they're billed) is recorded in the
-// AI call log through recordAiCall, under whichever caller the code runs for (see aiUsage.js).
-const API_URL = 'https://api.anthropic.com/v1/messages';
-const ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY ?? '';
-const REQUEST_TIMEOUT_MS = 120 * 1000;
+// The movie features' Claude calls, through admin's AI gateway: admin holds the key and records
+// every call (failures too: they're billed) under whichever caller the code runs for (aiUsage.js).
+const REQUEST_TIMEOUT_MS = 130 * 1000;
 
 // Resolves to the parsed response body.
 async function callClaude({ model, system, prompt, feature, maxTokens, tools }) {
-	const startedAt = Date.now();
-	let payload = null;
-	let failure = null;
-	try {
-		const response = await fetch(API_URL, {
-			method: 'POST',
-			headers: { 'x-api-key': ANTHROPIC_API_KEY, 'anthropic-version': '2023-06-01', 'content-type': 'application/json' },
-			body: JSON.stringify({
-				model,
-				max_tokens: maxTokens,
-				system,
-				...(tools ? { tools, tool_choice: { type: 'auto' } } : {}),
-				messages: [{ role: 'user', content: prompt }],
-			}),
-			signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
-		});
-		payload = await response.json().catch(() => null);
-		if (!response.ok) {
-			throw new Error(`Anthropic API returned HTTP ${response.status}: ${payload?.error?.message ?? 'no details'}`);
-		}
-		return payload;
-	}
-	catch (error) {
-		failure = error;
-		throw error;
-	}
-	finally {
-		const usage = payload?.usage ?? {};
-		recordAiCall({
-			feature,
-			provider: 'anthropic',
+	const { status, body: payload } = await callAi('messages', {
+		feature,
+		timeoutMs: REQUEST_TIMEOUT_MS,
+		body: {
 			model,
-			usage: {
-				input: usage.input_tokens,
-				output: usage.output_tokens,
-				cacheRead: usage.cache_read_input_tokens,
-				cacheWrite: usage.cache_creation_input_tokens,
-			},
-			durationMs: Date.now() - startedAt,
-			error: failure,
-		});
+			max_tokens: maxTokens,
+			system,
+			...(tools ? { tools, tool_choice: { type: 'auto' } } : {}),
+			messages: [{ role: 'user', content: prompt }],
+		},
+	});
+	if (status == null) throw new Error('Anthropic API unreachable');
+	if (status < 200 || status >= 300) {
+		throw new Error(`Anthropic API returned HTTP ${status}: ${payload?.error?.message ?? 'no details'}`);
 	}
+	return payload;
 }
 
 // A call answered through a tool, for JSON. Newer models don't accept a forced tool_choice, so the
@@ -78,7 +50,7 @@ async function callText(options) {
 }
 
 module.exports = {
-	aiEnabled: Boolean(ANTHROPIC_API_KEY),
+	aiEnabled,
 	callTool,
 	callText,
 };

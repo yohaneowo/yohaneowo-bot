@@ -9,7 +9,7 @@ const { aiEnabled, callTool } = require('./claude');
 // per run covers all candidates; the answer comes back as a tool call so it's valid JSON.
 // The same call reads the special formats (IMAX, 4DX…) from Wikipedia sentences (wikipedia.js);
 // only those sentences count, never the model's memory: most candidates are newer than its training.
-// Off (rule scores decide) without ANTHROPIC_API_KEY.
+// Off (rule scores decide) when the admin AI gateway is unavailable (no ADMIN_API_URL / token).
 const MODEL = process.env.MOVIE_AI_MODEL || 'claude-sonnet-5-5';
 // Re-reading formats for a release reminder is a small reading task.
 const FORMATS_MODEL = process.env.MOVIE_FORMATS_MODEL || 'claude-haiku-4-5-20251001';

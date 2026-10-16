@@ -1,9 +1,9 @@
 // TMDB (themoviedb.org): what's showing / coming in a region, and movie details.
-// TMDB_API_TOKEN takes either the v4 "API Read Access Token" or the v3 "API Key".
-const API_URL = 'https://api.themoviedb.org/3';
-const TMDB_API_TOKEN = process.env.TMDB_API_TOKEN ?? '';
+// Requests go through admin (POST /sources/tmdb), which holds the key and counts usage in
+// 接口管理 → 第三方接口; the bot no longer needs TMDB_API_TOKEN.
+const { movieRequest, adminApiEnabled } = require('../adminApi');
+
 const LANGUAGE = process.env.MOVIE_LANGUAGE || 'zh-TW';
-const REQUEST_TIMEOUT_MS = 15 * 1000;
 // now_playing / upcoming are short lists per region; a few pages cover them.
 const MAX_LIST_PAGES = 5;
 // Release types that count as "in cinemas": 3 theatrical, 2 limited theatrical.
@@ -28,21 +28,13 @@ function fetchEnglishDetails(type, id) {
 	return tmdb(`/${type}/${id}`, { language: 'en-US', append_to_response: 'credits,keywords' });
 }
 
-// The v4 read access token is a JWT; anything else is taken as the short v3 API key.
-const USE_BEARER = TMDB_API_TOKEN.startsWith('eyJ');
-
 async function tmdb(path, params = {}) {
-	const url = new URL(`${API_URL}${path}`);
-	for (const [key, value] of Object.entries(params)) url.searchParams.set(key, value);
-	if (!USE_BEARER) url.searchParams.set('api_key', TMDB_API_TOKEN);
-	const response = await fetch(url, {
-		headers: { Accept: 'application/json', ...(USE_BEARER ? { Authorization: `Bearer ${TMDB_API_TOKEN}` } : {}) },
-		signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
-	});
-	if (!response.ok) {
-		throw new Error(`TMDB ${path} returned HTTP ${response.status}`);
+	const query = Object.fromEntries(Object.entries(params).map(([key, value]) => [key, String(value)]));
+	const { status, body } = await movieRequest('POST', '/sources/tmdb', { path, params: query });
+	if (status < 200 || status >= 300) {
+		throw new Error(`TMDB ${path} returned HTTP ${status}`);
 	}
-	return response.json();
+	return body;
 }
 
 async function fetchList(path, region) {
@@ -122,7 +114,7 @@ function posterUrl(details) {
 }
 
 module.exports = {
-	tmdbEnabled: Boolean(TMDB_API_TOKEN),
+	tmdbEnabled: adminApiEnabled,
 	fetchRegionMovies,
 	fetchMovieDetails,
 	fetchEnglishDetails,

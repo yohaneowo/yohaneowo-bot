@@ -6,7 +6,7 @@ const { SYSTEM_CALLER, withAiCaller } = require('../aiUsage');
 // by content vector. This is the AI's per-movie evidence: "it's like these, which you rated so".
 // Experiments showed vectors don't beat the rule ranking at picking candidates, but they find
 // genuinely related titles (a sequel's earlier films, an anime film's series), so that is all
-// they're used for. Without VOYAGE_API_KEY this returns nothing and the AI works from the summary.
+// they're used for. Without the admin AI gateway this returns nothing and the AI works from the summary.
 const NEIGHBOURS = 5;
 const DETAIL_CONCURRENCY = 4;
 

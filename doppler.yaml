@@ -1,0 +1,6 @@
+# Secrets live in Doppler, not in .env files: config dev = the test bots, prd = the stable bots.
+# One-time per machine: `doppler login`, then `doppler setup` in this folder (reads this file).
+# The npm scripts wrap `doppler run`; the stable ones pass --config prd.
+setup:
+  project: yohaneowo-bot
+  config: dev

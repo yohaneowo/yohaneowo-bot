@@ -1,19 +1,15 @@
 const crypto = require('node:crypto');
-const fs = require('node:fs');
-const path = require('node:path');
-const { recordAiCall } = require('../aiUsage');
+const { readCache, writeCache } = require('./store');
+const { callAi, aiEnabled } = require('../aiUsage');
 
 // Content vectors for movies and TV shows (Voyage AI). A title's vector depends only on its TMDB
 // text, never on anyone's ratings, so each is computed once and shared by every subscriber; it is
 // recomputed only when that text changes (e.g. an upcoming movie gets a fuller synopsis) or the
-// model/dimensions change. Stored in data/embeddings.json.
-const API_URL = 'https://api.voyageai.com/v1/embeddings';
-const VOYAGE_API_KEY = process.env.VOYAGE_API_KEY ?? '';
+// model/dimensions change. Persisted in admin; the local copy is disposable. Requests go through
+// admin's AI gateway, which holds the Voyage key and records each billed call.
 const MODEL = process.env.MOVIE_EMBEDDING_MODEL || 'voyage-3.5';
 const DIMENSIONS = 512;
-const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, '..', '..', 'data');
-const CACHE_PATH = path.join(DATA_DIR, 'embeddings.json');
-const REQUEST_TIMEOUT_MS = 60 * 1000;
+const REQUEST_TIMEOUT_MS = 70 * 1000;
 // Accounts without a payment method are limited to ~10K tokens/minute, so batches stay small
 // and rate-limit answers are waited out.
 const MAX_BATCH_TOKENS = 8000;
@@ -22,31 +18,13 @@ const RATE_LIMIT_WAIT_MS = 65 * 1000;
 const MAX_ATTEMPTS = 5;
 const MAX_OVERVIEW_LENGTH = 1200;
 
-let cache = null;
-
-function loadCache() {
-	if (cache) return cache;
-	try {
-		cache = JSON.parse(fs.readFileSync(CACHE_PATH, 'utf8'));
-	}
-	catch {
-		cache = null;
-	}
-	if (cache?.model !== MODEL || cache?.dimensions !== DIMENSIONS) {
-		cache = { model: MODEL, dimensions: DIMENSIONS, items: {} };
-	}
+const cache = { items: {} };
+const cacheKey = (key) => MODEL + ':' + DIMENSIONS + ':' + key;
+async function loadCache(keys) {
+	const missing = keys.filter((key) => !cache.items[key]);
+	const saved = await readCache('embeddings', missing.map(cacheKey));
+	for (const key of missing) if (saved[cacheKey(key)]) cache.items[key] = saved[cacheKey(key)];
 	return cache;
-}
-
-function saveCache() {
-	try {
-		fs.mkdirSync(DATA_DIR, { recursive: true });
-		fs.writeFileSync(`${CACHE_PATH}.tmp`, JSON.stringify(cache));
-		fs.renameSync(`${CACHE_PATH}.tmp`, CACHE_PATH);
-	}
-	catch (error) {
-		console.warn('[movie] Could not save embeddings:', error.message);
-	}
 }
 
 // The text a vector is made from, from English TMDB details (the most complete language, and the
@@ -82,39 +60,28 @@ function estimateTokens(text) {
 	return Math.ceil(text.length / 3);
 }
 
-// Rate-limited attempts aren't billed, so only the final answer (success or error) is recorded.
+// Rate-limited attempts aren't billed (admin doesn't record them); they're waited out here.
 async function requestEmbeddings(texts) {
 	for (let attempt = 1; ; attempt++) {
-		const startedAt = Date.now();
-		const response = await fetch(API_URL, {
-			method: 'POST',
-			headers: { Authorization: `Bearer ${VOYAGE_API_KEY}`, 'Content-Type': 'application/json' },
-			body: JSON.stringify({ input: texts, model: MODEL, input_type: 'document', output_dimension: DIMENSIONS }),
-			signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+		const { status, body: payload } = await callAi('embeddings', {
+			feature: 'movie-embedding',
+			timeoutMs: REQUEST_TIMEOUT_MS,
+			body: { input: texts, model: MODEL, input_type: 'document', output_dimension: DIMENSIONS },
 		});
-		if (response.status === 429 && attempt < MAX_ATTEMPTS) {
+		if (status === 429 && attempt < MAX_ATTEMPTS) {
 			console.warn(`[movie] Voyage rate limit hit; waiting ${RATE_LIMIT_WAIT_MS / 1000}s (attempt ${attempt})`);
 			await new Promise((resolve) => setTimeout(resolve, RATE_LIMIT_WAIT_MS));
 			continue;
 		}
-		const payload = await response.json().catch(() => null);
-		const error = response.ok ? null : new Error(`Voyage returned HTTP ${response.status}: ${payload?.detail ?? 'no details'}`);
-		recordAiCall({
-			feature: 'movie-embedding',
-			provider: 'voyage',
-			model: MODEL,
-			usage: { input: payload?.usage?.total_tokens },
-			durationMs: Date.now() - startedAt,
-			error,
-		});
-		if (error) throw error;
+		if (status == null) throw new Error('Voyage unreachable');
+		if (status < 200 || status >= 300) throw new Error(`Voyage returned HTTP ${status}: ${payload?.detail ?? 'no details'}`);
 		return payload.data.sort((a, b) => a.index - b.index).map((item) => item.embedding);
 	}
 }
 
 // items: [{ key, text }]. Resolves to Map(key -> vector). Only new or changed texts are sent.
 async function embed(items) {
-	const store = loadCache();
+	const store = await loadCache(items.map((item) => item.key));
 	const pending = items.filter((item) => store.items[item.key]?.hash !== hashText(item.text));
 	let batch = [];
 	let batchTokens = 0;
@@ -125,7 +92,7 @@ async function embed(items) {
 			// 4 decimals keep the file small without changing similarities in any meaningful way.
 			store.items[item.key] = { hash: hashText(item.text), vector: vectors[index].map((value) => Math.round(value * 1e4) / 1e4) };
 		});
-		saveCache();
+		await writeCache('embeddings', Object.fromEntries(batch.map((item) => [cacheKey(item.key), store.items[item.key]])));
 		batch = [];
 		batchTokens = 0;
 	};
@@ -142,7 +109,7 @@ async function embed(items) {
 
 // Vectors already in the cache, without fetching anything (keys like 'movie:603').
 function cachedVector(key) {
-	return loadCache().items[key]?.vector ?? null;
+	return cache.items[key]?.vector ?? null;
 }
 
 function cosine(a, b) {
@@ -158,7 +125,7 @@ function cosine(a, b) {
 }
 
 module.exports = {
-	embeddingsEnabled: Boolean(VOYAGE_API_KEY),
+	embeddingsEnabled: aiEnabled,
 	embeddingText,
 	embed,
 	cachedVector,

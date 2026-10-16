@@ -1,7 +1,7 @@
 const { MessageFlags, RESTJSONErrorCodes } = require('discord.js');
 const tmdb = require('./tmdb');
-const { fetchMovieStatus, fetchUserMovies, traktEnabled } = require('./trakt');
-const { buildTaste, scoreMovie, favouritePeople } = require('./taste');
+const { fetchMovieStatus, traktEnabled } = require('./trakt');
+const { loadTaste, scoreMovie, favouritePeople } = require('./taste');
 const { findSimilarHistory } = require('./similar');
 const { aiEnabled, judgeCandidates, extractFormats } = require('./judge');
 const { formatSentencesOrNone } = require('./wikipedia');
@@ -129,7 +129,7 @@ async function refreshFormats(userId, id, record, details) {
 	if (!hash || hash === record.formatsHash) return record;
 	try {
 		const { formats, filmedInImax } = await extractFormats(details, sentences);
-		return store.updateMovie(userId, id, { formats, filmedInImax, formatsHash: hash });
+		return await store.updateMovie(userId, id, { formats, filmedInImax, formatsHash: hash });
 	}
 	catch (error) {
 		console.warn(`[movie] Re-reading formats for ${id} failed:`, error.message);
@@ -149,7 +149,7 @@ async function collectReminders(userId, movies, taste, regionData, date) {
 		const releaseDate = known?.releaseDate ?? tmdb.regionReleaseDate(details, regionData.region, date);
 		if (known?.kind !== 'now' && releaseDate > date) {
 			// Postponed: wait for the new date.
-			store.updateMovie(userId, id, { releaseDate });
+			await store.updateMovie(userId, id, { releaseDate });
 			continue;
 		}
 		const entry = known ?? { details, releaseDate, rereleaseYear: tmdb.rereleaseOf(details, regionData.region, releaseDate) };
@@ -195,7 +195,7 @@ async function judgeFresh(userId, movies, taste, regionData) {
 			};
 		// The AI left it out: try again next run.
 		if (!verdict) continue;
-		store.updateMovie(userId, candidate.details.id, {
+		await store.updateMovie(userId, candidate.details.id, {
 			title: candidate.details.title,
 			decision: verdict.recommend ? 'recommend' : 'reject',
 			reason: verdict.reason,
@@ -226,7 +226,7 @@ async function findRewatches(userId, movies, taste, regionData) {
 		const id = entry.details.id;
 		const rating = taste.ratingByTmdb.get(id);
 		if (!entry.rereleaseYear || movies[id] || rating == null || rating < threshold) continue;
-		const record = store.updateMovie(userId, id, {
+		const record = await store.updateMovie(userId, id, {
 			title: entry.details.title,
 			decision: 'recommend',
 			rewatch: true,
@@ -276,31 +276,38 @@ async function runForSubscriber(client, subscriber, regionData, trigger) {
 	const displayName = discordUser?.globalName ?? discordUser?.username ?? null;
 	// AI calls made for this subscriber are their cost (shared ones opt out in similar.js).
 	const caller = { platform: 'discord', id: userId, name: displayName, avatarUrl: discordUser?.displayAvatarURL?.({ size: 64 }) ?? null, trigger };
-	return withAiCaller(caller, () => runSubscriberSteps(client, subscriber, regionData, { name, displayName }));
+	return withAiCaller(caller, () => store.withSubscription(subscriber, () => runSubscriberSteps(client, subscriber, regionData, { name, displayName })));
 }
 
 async function runSubscriberSteps(client, subscriber, regionData, { name, displayName }) {
-	const { userId, traktUser } = subscriber;
-	const taste = await buildTaste(await fetchUserMovies(traktUser));
-	const movies = store.userMovies(userId);
+	const { userId } = subscriber;
+	const taste = await loadTaste(userId);
+	// A new subscription's first sync hasn't finished yet; the next run will have it.
+	if (!taste) {
+		console.log('[movie] No taste profile yet; skipping this subscriber for now.');
+		return { recommended: 0, reminded: 0, judged: 0 };
+	}
+	const movies = await store.userMovies(userId);
 	const date = today();
 
 	const reminders = await collectReminders(userId, movies, taste, regionData, date);
 	const judged = (await judgeFresh(userId, movies, taste, regionData)) + (await findRewatches(userId, movies, taste, regionData));
-	const cards = [...reminders, ...collectRecommendations(movies, taste, regionData)];
+	const cards = [...reminders, ...collectRecommendations(await store.userMovies(userId), taste, regionData)];
 
 	// Cards are marked sent only once their message got through, so a failed DM retries next run.
 	const result = { recommended: 0, reminded: 0, judged };
 	for (const { payload, cards: sentCards } of buildDigestMessages(cards, date, displayName)) {
+		const current = await store.getSubscriber(userId);
+		if (!current || current.revision !== subscriber.revision) return result;
 		if (!(await sendDm(client, userId, payload))) continue;
 		const now = new Date().toISOString();
 		for (const card of sentCards) {
 			if (card.type === 'reminder') {
-				store.updateMovie(userId, card.id, { remindedAt: now });
+				await store.updateMovie(userId, card.id, { remindedAt: now });
 				result.reminded += 1;
 			}
 			else {
-				store.updateMovie(userId, card.id, {
+				await store.updateMovie(userId, card.id, {
 					kind: card.type,
 					// Rewatches don't count toward the daily quotas.
 					sentKind: card.record.rewatch ? 'rewatch' : card.type,
@@ -331,7 +338,7 @@ async function runGuarded(client, subscriber, regionData, trigger) {
 
 async function runDaily(client) {
 	const byRegion = new Map();
-	for (const subscriber of store.listSubscribers()) {
+	for (const subscriber of await store.listSubscribers()) {
 		byRegion.set(subscriber.region, [...(byRegion.get(subscriber.region) ?? []), subscriber]);
 	}
 	for (const [region, subscribers] of byRegion) {
@@ -351,7 +358,8 @@ async function runDaily(client) {
 
 // For /movie check. Resolves to the run result, or null when a run is already in progress.
 async function runNow(client, userId) {
-	const subscriber = store.getSubscriber(userId);
+	const subscriber = await store.getSubscriber(userId);
+	if (!subscriber) throw new Error('Movie subscription is no longer active.');
 	return runGuarded(client, { userId, ...subscriber }, await loadRegion(subscriber.region), 'command');
 }
 
@@ -363,12 +371,13 @@ async function handleFeedbackButton(interaction) {
 		await handleAskButton(interaction, id);
 		return;
 	}
-	if (!['want', 'skip', 'seen'].includes(action) || !store.userMovies(interaction.user.id)[id]) {
-		await interaction.reply({ content: '找不到这则推荐的记录。', flags: MessageFlags.Ephemeral });
+	await interaction.deferUpdate();
+	if (!['want', 'skip', 'seen'].includes(action) || !(await store.userMovies(interaction.user.id))[id]) {
+		await interaction.followUp({ content: '找不到这则推荐的记录。', flags: MessageFlags.Ephemeral });
 		return;
 	}
-	const record = store.updateMovie(interaction.user.id, id, { feedback: action });
-	await interaction.update({ components: markFeedback(interaction.message.components, id, action) });
+	const record = await store.updateMovie(interaction.user.id, id, { feedback: action });
+	await interaction.editReply({ components: markFeedback(interaction.message.components, id, action) });
 	if (action === 'seen') await nudgeToRate(interaction, id, record.title);
 }
 
@@ -381,7 +390,7 @@ const UNLOGGED_NUDGES = [
 ];
 
 async function nudgeToRate(interaction, tmdbId, title) {
-	const subscriber = store.getSubscriber(interaction.user.id);
+	const subscriber = await store.getSubscriber(interaction.user.id);
 	if (!subscriber) return;
 	let content;
 	try {

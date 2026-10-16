@@ -1,8 +1,7 @@
 const { MessageFlags } = require('discord.js');
 const tmdb = require('./tmdb');
 const store = require('./store');
-const { fetchUserMovies } = require('./trakt');
-const { buildTaste, describeTaste } = require('./taste');
+const { loadTaste, describeTaste } = require('./taste');
 const { findSimilarHistory } = require('./similar');
 const { fetchArticleSections } = require('./wikipedia');
 const { aiEnabled, callText } = require('./claude');
@@ -64,7 +63,8 @@ async function optional(promise, fallback) {
 }
 
 async function buildPrompt(subscriber, details, record) {
-	const taste = await buildTaste(await fetchUserMovies(subscriber.traktUser));
+	const taste = await loadTaste(subscriber.userId);
+	if (!taste) throw new Error('No taste profile yet (first statistics sync not finished).');
 	const [similar, sections, reviews, collection] = await Promise.all([
 		optional(findSimilarHistory(taste, [details]).then((map) => map.get(details.id) ?? []), []),
 		optional(fetchArticleSections(details), { production: '', reception: '' }),
@@ -136,28 +136,29 @@ async function answer(interaction, subscriber, tmdbId, record) {
 
 // Button customId movie:ask:<tmdbId>.
 async function handleAskButton(interaction, tmdbId) {
+	await interaction.deferReply({ flags: MessageFlags.Ephemeral });
 	const userId = interaction.user.id;
-	const record = store.userMovies(userId)[tmdbId];
-	const subscriber = store.getSubscriber(userId);
+	const record = (await store.userMovies(userId))[tmdbId];
+	const subscriber = await store.getSubscriber(userId);
 	if (!aiEnabled || !subscriber || !record) {
-		await interaction.reply({ content: aiEnabled ? '找不到这则推荐的记录。' : 'AI 还没有设定好。', flags: MessageFlags.Ephemeral });
+		await interaction.editReply({ content: aiEnabled ? '找不到这则推荐的记录。' : 'AI 还没有设定好。' });
 		return;
 	}
 
 	const key = `${userId}:${tmdbId}`;
 	const cached = answers.get(key);
 	if (cached && Date.now() - cached.at < ANSWER_CACHE_MS) {
-		await interaction.reply({ content: cached.text, flags: MessageFlags.Ephemeral });
+		await interaction.editReply({ content: cached.text });
 		return;
 	}
 	if (!underDailyLimit(userId)) {
-		await interaction.reply({ content: `今天已经问了 ${MAX_ASKS_PER_DAY} 次，明天再来吧。`, flags: MessageFlags.Ephemeral });
+		await interaction.editReply({ content: `今天已经问了 ${MAX_ASKS_PER_DAY} 次，明天再来吧。` });
 		return;
 	}
 
 	// Gathering the material and the AI answer take 10-20 seconds; Discord wants a reply within 3.
 	// Say so plainly (a deferred reply only shows "thinking…"), then replace it with the answer.
-	await interaction.reply({ content: '💬 正在整理这部片的资料和评价，大约需要 10–20 秒…', flags: MessageFlags.Ephemeral });
+	await interaction.editReply({ content: '💬 正在整理这部片的资料和评价，大约需要 10–20 秒…' });
 	countAsk(userId);
 	try {
 		const text = await answer(interaction, subscriber, tmdbId, record);

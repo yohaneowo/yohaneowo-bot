@@ -250,7 +250,37 @@ function installConsoleCapture(source) {
 	}
 }
 
+// Movie state is authoritative in admin: unlike logs, failures must propagate.
+// timeoutMs: longer for calls admin forwards to slow third parties (Trakt pages, the Wikimedia queue).
+async function movieRequest(method, path, body, timeoutMs = 15000) {
+	if (!enabled) throw new Error('Movie storage requires ADMIN_API_URL and ADMIN_API_TOKEN.');
+	const response = await fetch(ADMIN_API_URL + '/api/v1/bot/internal/movies' + path, {
+		method, headers: { 'Content-Type': 'application/json', 'X-Bot-Token': ADMIN_API_TOKEN },
+		...(body === undefined ? {} : { body: JSON.stringify(body) }),
+		signal: AbortSignal.timeout(timeoutMs),
+	});
+	const result = await response.json().catch(() => null);
+	if (!response.ok || !result?.success) throw new Error(`Movie storage request failed (HTTP ${response.status}${result?.msg ? `: ${result.msg}` : ''}).`);
+	return result.data;
+}
+
+// AI calls through admin's gateway (Claude, Voyage): admin holds the keys and writes the AI call log.
+// Resolves to { status, body } — the provider's own status (null when unreachable) and answer.
+async function aiGatewayRequest(path, body, timeoutMs) {
+	if (!enabled) throw new Error('AI calls require ADMIN_API_URL and ADMIN_API_TOKEN.');
+	const response = await fetch(ADMIN_API_URL + '/api/v1/ai_usage/internal/ai' + path, {
+		method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Bot-Token': ADMIN_API_TOKEN },
+		body: JSON.stringify(body),
+		signal: AbortSignal.timeout(timeoutMs),
+	});
+	const result = await response.json().catch(() => null);
+	if (!response.ok || !result?.success) throw new Error(`AI gateway request failed (HTTP ${response.status}${result?.msg ? `: ${result.msg}` : ''}).`);
+	return result.data;
+}
+
 module.exports = {
+	movieRequest,
+	aiGatewayRequest,
 	adminApiEnabled: enabled,
 	syncGroups,
 	reportJoin,

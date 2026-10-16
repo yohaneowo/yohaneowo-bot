@@ -1,6 +1,6 @@
 const crypto = require('node:crypto');
-const fs = require('node:fs');
-const path = require('node:path');
+const { movieRequest } = require('../adminApi');
+const { readCache, writeCache } = require('./store');
 
 // Which special formats a movie was made in (IMAX, Dolby Cinema, 4DX, ScreenX…). No format
 // owner's site can be read by a bot (IMAX, CJ 4DPLEX and IMDb all block it), but the English
@@ -8,65 +8,28 @@ const path = require('node:path');
 // out the sentences that mention a format; the AI (judge.js) decides from them which formats the
 // film was really released in, so passing mentions ("beat the IMAX record of…") don't count.
 // TMDB details carry the Wikidata id, which leads to the right article without guessing titles.
-const USER_AGENT = 'yohaneowo-bot/1.0 (https://github.com/yohaneowo/yohaneowo-bot)';
-const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, '..', '..', 'data');
-const CACHE_PATH = path.join(DATA_DIR, 'wiki-formats.json');
+
 // Formats are often announced close to release, so cached results are refreshed after this.
 const CACHE_TTL_MS = 3 * 24 * 60 * 60 * 1000;
-const REQUEST_TIMEOUT_MS = 15 * 1000;
-// Wikimedia answers "too many requests" to fast clients; space requests out.
-const REQUEST_GAP_MS = 400;
-const RATE_LIMIT_WAIT_MS = 5 * 1000;
 const MAX_SENTENCES = 6;
 const MAX_SENTENCE_LENGTH = 300;
 const FORMAT_PATTERN = /\bIMAX\b|Dolby Cinema|Dolby Vision|\b4DX\b|ScreenX|MX4D|D-?BOX|RealD|\b3D\b|\b70 ?mm\b|high frame rate|\bHFR\b|premium large format/i;
 
-let cache = null;
-let queue = Promise.resolve();
-
-function loadCache() {
-	if (cache) return cache;
-	try {
-		cache = JSON.parse(fs.readFileSync(CACHE_PATH, 'utf8'));
-	}
-	catch {
-		cache = {};
-	}
+const cache = {};
+async function loadCache(id) {
+	if (!cache[id]) Object.assign(cache, await readCache('wikipedia', [String(id)]));
 	return cache;
 }
-
-function saveCache() {
-	try {
-		fs.mkdirSync(DATA_DIR, { recursive: true });
-		fs.writeFileSync(`${CACHE_PATH}.tmp`, JSON.stringify(cache));
-		fs.renameSync(`${CACHE_PATH}.tmp`, CACHE_PATH);
-	}
-	catch (error) {
-		console.warn('[movie] Could not save the Wikipedia format cache:', error.message);
-	}
+async function saveCache(id) {
+	await writeCache('wikipedia', { [id]: cache[id] });
 }
 
-// One Wikimedia request at a time, REQUEST_GAP_MS apart; retries once when rate-limited
-// (which comes back as a plain-text body instead of JSON).
-function wikimedia(url) {
-	const run = async () => {
-		for (let attempt = 1; ; attempt++) {
-			const response = await fetch(url, { headers: { 'User-Agent': USER_AGENT }, signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS) });
-			const text = await response.text();
-			await new Promise((resolve) => setTimeout(resolve, REQUEST_GAP_MS));
-			try {
-				return JSON.parse(text);
-			}
-			catch {
-				if (attempt >= 2) throw new Error(`Wikimedia answered HTTP ${response.status}: ${text.slice(0, 80)}`);
-				await new Promise((resolve) => setTimeout(resolve, RATE_LIMIT_WAIT_MS));
-			}
-		}
-	};
-	const result = queue.then(run, run);
-	// The next request waits for this one either way; its failure is the caller's to handle.
-	queue = result.catch(() => null);
-	return result;
+// Admin makes the request (POST /sources/wikipedia): it serializes Wikimedia calls, spaces them out
+// and retries once when rate-limited, for every caller at once.
+async function wikimedia(url) {
+	const { status, body } = await movieRequest('POST', '/sources/wikipedia', { url }, 30000);
+	if (body == null) throw new Error(`Wikimedia answered HTTP ${status}`);
+	return body;
 }
 
 async function englishTitle(wikidataId) {
@@ -96,7 +59,7 @@ function formatSentences(text) {
 // The Wikipedia sentences about formats for a movie (TMDB details with external_ids), cached.
 // Resolves to { sentences, hash } — sentences is empty when there's no article or no mention.
 async function fetchFormatSentences(details) {
-	const store = loadCache();
+	const store = await loadCache(details.id);
 	const cached = store[details.id];
 	if (cached && Date.now() - cached.fetchedAt < CACHE_TTL_MS) return cached;
 
@@ -112,7 +75,7 @@ async function fetchFormatSentences(details) {
 		fetchedAt: Date.now(),
 	};
 	store[details.id] = entry;
-	saveCache();
+	await saveCache(details.id);
 	return entry;
 }
 

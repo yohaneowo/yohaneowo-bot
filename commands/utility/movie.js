@@ -39,7 +39,7 @@ async function subscribe(interaction) {
 
 	// Keyed by the profile slug (stable); the username is only for display.
 	const traktName = history.profile.username;
-	store.subscribe(interaction.user.id, history.profile.slug, traktName, region);
+	await store.subscribe(interaction.user.id, history.profile.slug, traktName, region);
 	// Recommendations arrive by DM, so make sure one can actually get through now.
 	const dmOk = await interaction.user
 		.send(`🎬 已订阅电影推荐（Trakt：${traktName}，地区：${regionLabel(region)}）。每天会根据你的观看记录挑新片私信给你。`)
@@ -57,12 +57,12 @@ async function subscribe(interaction) {
 }
 
 async function status(interaction) {
-	const subscriber = store.getSubscriber(interaction.user.id);
+	const subscriber = await store.getSubscriber(interaction.user.id);
 	if (!subscriber) {
 		await interaction.editReply('你还没有订阅，用 `/movie subscribe` 开始。');
 		return;
 	}
-	const records = Object.values(store.userMovies(interaction.user.id));
+	const records = Object.values(await store.userMovies(interaction.user.id));
 	const sent = records.filter((record) => record.sentAt).sort((a, b) => b.sentAt.localeCompare(a.sentAt));
 	const waitingRelease = sent.filter((record) => record.kind === 'upcoming' && !record.remindedAt && !['skip', 'seen'].includes(record.feedback));
 	await interaction.editReply(
@@ -77,7 +77,7 @@ async function status(interaction) {
 }
 
 async function check(interaction) {
-	if (!store.getSubscriber(interaction.user.id)) {
+	if (!(await store.getSubscriber(interaction.user.id))) {
 		await interaction.editReply('你还没有订阅，用 `/movie subscribe` 开始。');
 		return;
 	}
@@ -148,7 +148,7 @@ module.exports = {
 		else if (subcommand === 'status') {await status(interaction);}
 		else if (subcommand === 'check') {await check(interaction);}
 		else {
-			store.unsubscribe(interaction.user.id);
+			await store.unsubscribe(interaction.user.id);
 			await interaction.editReply('已取消订阅，不会再收到推荐。');
 		}
 	},

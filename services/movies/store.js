@@ -1,90 +1,53 @@
-const fs = require('node:fs');
-const path = require('node:path');
+const { AsyncLocalStorage } = require('node:async_hooks');
+const subscriptionContext = new AsyncLocalStorage();
+const { movieRequest } = require('../adminApi');
 
-// Subscriptions and what was decided/sent per user, in data/movies.json (a volume in Docker):
-// {
-//   subscribers: { [discordUserId]: { traktUser (the profile slug), traktName, region, subscribedAt } },
-//   movies: { [discordUserId]: { [tmdbId]: MovieRecord } },
-// }
-// MovieRecord: { title, decision: 'recommend' | 'reject', reason, predictedRating, kind: 'now' | 'upcoming',
-//                releaseDate, evaluatedAt, sentAt?, remindedAt?, feedback?: 'want' | 'skip' | 'seen' }
-// TMDB details of movies in people's histories are cached in data/tmdb-cache.json; they don't change.
-const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, '..', '..', 'data');
-const STORE_PATH = path.join(DATA_DIR, 'movies.json');
-const CACHE_PATH = path.join(DATA_DIR, 'tmdb-cache.json');
-
-function readJson(filePath, fallback) {
-	try {
-		return JSON.parse(fs.readFileSync(filePath, 'utf8'));
-	}
-	catch (error) {
-		if (error.code !== 'ENOENT') console.warn(`[movie] Could not read ${path.basename(filePath)}:`, error.message);
-		return fallback;
-	}
-}
-
-// Write then rename, so a crash mid-write never leaves a half-written file.
-function writeJson(filePath, data) {
-	try {
-		fs.mkdirSync(DATA_DIR, { recursive: true });
-		fs.writeFileSync(`${filePath}.tmp`, JSON.stringify(data));
-		fs.renameSync(`${filePath}.tmp`, filePath);
-	}
-	catch (error) {
-		console.warn(`[movie] Could not save ${path.basename(filePath)}:`, error.message);
-	}
-}
-
-const state = readJson(STORE_PATH, {});
-state.subscribers ??= {};
-state.movies ??= {};
-const detailCache = readJson(CACHE_PATH, {});
-
-function save() {
-	writeJson(STORE_PATH, state);
-}
-
-function saveDetailCache() {
-	writeJson(CACHE_PATH, detailCache);
-}
+// Admin is authoritative; nothing movie-related is kept in the bot.
+const part = (value) => encodeURIComponent(value);
 
 function getSubscriber(userId) {
-	return state.subscribers[userId] ?? null;
+	return movieRequest('GET', `/subscribers/${part(userId)}`);
 }
-
 function listSubscribers() {
-	return Object.entries(state.subscribers).map(([userId, subscriber]) => ({ userId, ...subscriber }));
+	return movieRequest('GET', '/subscribers');
 }
-
-function subscribe(userId, traktUser, traktName, region) {
-	state.subscribers[userId] = { traktUser, traktName, region, subscribedAt: new Date().toISOString() };
-	save();
+function subscribe(userId, traktUser, traktName, region, subscribedAt) {
+	return movieRequest('PUT', `/subscribers/${part(userId)}`, { traktUser, traktName, region, subscribedAt });
 }
-
-// Decisions are kept, so subscribing again later doesn't resend old recommendations.
 function unsubscribe(userId) {
-	delete state.subscribers[userId];
-	save();
+	return movieRequest('DELETE', `/subscribers/${part(userId)}`);
 }
-
 function userMovies(userId) {
-	return (state.movies[userId] ??= {});
+	return movieRequest('GET', `/records/${part(userId)}`);
 }
-
-function updateMovie(userId, tmdbId, fields) {
-	const movies = userMovies(userId);
-	movies[tmdbId] = { ...movies[tmdbId], ...fields };
-	save();
-	return movies[tmdbId];
+function updateMovie(userId, tmdbId, fields, revision) {
+	return movieRequest('PATCH', `/records/${part(userId)}/${part(tmdbId)}`, { data: fields, revision: revision ?? subscriptionContext.getStore()?.revision });
 }
-
-module.exports = {
-	getSubscriber,
-	listSubscribers,
-	subscribe,
-	unsubscribe,
-	userMovies,
-	updateMovie,
-	detailCache,
-	saveDetailCache,
-};
+async function readCache(namespace, keys) {
+	const result = {};
+	for (let i = 0; i < keys.length; i += 200) {
+		Object.assign(result, await movieRequest('POST', `/cache/${namespace}/read`, { keys: keys.slice(i, i + 200).map(String) }));
+	}
+	return result;
+}
+async function writeCache(namespace, items) {
+	const entries = Object.entries(items);
+	for (let i = 0; i < entries.length; i += 100) {
+		await movieRequest('PUT', `/cache/${namespace}`, { items: Object.fromEntries(entries.slice(i, i + 100)) });
+	}
+}
+// The taste profile admin's statistics sync stored: { taste, syncedAt }, or null before the first sync.
+function getTaste(userId) {
+	return movieRequest('GET', `/taste/${part(userId)}`);
+}
+// IMDb / Rotten Tomatoes / Metacritic scores by IMDb ID. Admin queries OMDb and caches the answers.
+async function fetchPublicRatings(imdbIds) {
+	const result = {};
+	const ids = [...new Set(imdbIds)];
+	for (let i = 0; i < ids.length; i += 200) {
+		Object.assign(result, await movieRequest('POST', '/ratings', { imdbIds: ids.slice(i, i + 200) }));
+	}
+	return result;
+}
+const withSubscription = (subscription, fn) => subscriptionContext.run(subscription, fn);
+module.exports = { withSubscription, getSubscriber, listSubscribers, subscribe, unsubscribe, userMovies, updateMovie, getTaste, readCache, writeCache, fetchPublicRatings };

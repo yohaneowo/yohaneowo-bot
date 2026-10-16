@@ -1,4 +1,4 @@
-// `npm run dev`: starts the Discord bot and, when .env.dev has LINE credentials, a Cloudflare
+// `npm run dev`: starts the Discord bot and, when the dev config has LINE credentials, a Cloudflare
 // tunnel plus the LINE bot, then points the LINE channel's webhook at the tunnel.
 //
 // Tunnel modes:
@@ -10,12 +10,13 @@
 // Unless XHS_API_URL is set, it also runs XHS-Downloader (Xiaohongshu lookups) on :5556.
 //
 // Ctrl+C stops everything. `npm run dev -- --line-only` skips the Discord bot.
+//
+// Environment: the npm script runs this under `doppler run --config dev`; the children inherit it.
 const { spawn, execFileSync } = require('node:child_process');
 const path = require('node:path');
 const { messagingApi } = require('@line/bot-sdk');
 
 const ROOT = path.join(__dirname, '..');
-const ENV_FILE = '.env.dev';
 const LINE_PORT = 8787;
 const TUNNEL_CONTAINER = 'yohaneowo-dev-tunnel';
 const XHS_CONTAINER = 'yohaneowo-dev-xhs';
@@ -23,7 +24,6 @@ const XHS_PORT = 5556;
 const QUICK_TUNNEL_URL_PATTERN = /https:\/\/[a-z0-9-]+\.trycloudflare\.com/;
 const NAMED_TUNNEL_READY_PATTERN = /Registered tunnel connection/;
 
-process.loadEnvFile(path.join(ROOT, ENV_FILE));
 const lineEnabled = Boolean(process.env.LINE_CHANNEL_SECRET && process.env.LINE_CHANNEL_ACCESS_TOKEN);
 const lineOnly = process.argv.includes('--line-only');
 const tunnelToken = process.env.CLOUDFLARE_TUNNEL_TOKEN;
@@ -150,7 +150,7 @@ async function main() {
 	}
 
 	if (!lineOnly) {
-		start('dc', process.execPath, [`--env-file=${ENV_FILE}`, 'index.js']);
+		start('dc', process.execPath, ['index.js']);
 	}
 
 	if (!lineEnabled) {
@@ -163,8 +163,8 @@ async function main() {
 
 	const publicUrl = await startTunnel();
 	console.log(`[dev] Tunnel ready: ${publicUrl}`);
-	// Real environment variables win over --env-file, so this overrides LINE_PUBLIC_URL in .env.dev.
-	start('line', process.execPath, [`--env-file=${ENV_FILE}`, 'line.js'], {
+	// Overrides the dev config's LINE_PUBLIC_URL with this run's tunnel.
+	start('line', process.execPath, ['line.js'], {
 		env: { LINE_PUBLIC_URL: publicUrl, LINE_PORT: String(LINE_PORT) },
 	});
 	await setLineWebhook(publicUrl);
