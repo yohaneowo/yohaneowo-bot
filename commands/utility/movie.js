@@ -5,61 +5,52 @@ const {
 	MessageFlags,
 } = require('discord.js');
 const store = require('../../services/movies/store');
-const { fetchUserMovies, parseTraktUser, TraktUserError } = require('../../services/movies/trakt');
+const { TraktUserError } = require('../../services/movies/trakt');
 const { moviesEnabled, runNow } = require('../../services/movies/recommender');
-const { isRegion, regionChoices, regionLabel } = require('../../services/movies/regions');
+const { regionLabel } = require('../../services/movies/regions');
+
+// Trakt details are entered on the website; a profile is found here through the Discord account linked there.
+const SITE_URL = process.env.SITE_URL || 'https://yohaneowo.com';
+const SETUP_URL = `${SITE_URL}/moviehub`;
+const NOT_SUBSCRIBED = `你还没有订阅。先在网站建立观影档案（${SETUP_URL}），再用 \`/movie subscribe\` 开启推荐。`;
 
 // /movie check runs the whole pipeline (TMDB, Trakt, AI), so keep it from being spammed.
 const CHECK_COOLDOWN_MS = 10 * 60 * 1000;
 const lastCheckAt = new Map();
 
 async function subscribe(interaction) {
-	const traktUser = parseTraktUser(interaction.options.getString('trakt'));
-	// Required, with no default: a wrong region means recommending films that aren't showing there.
-	const region = interaction.options.getString('region', true).trim().toUpperCase();
-	if (!traktUser) {
-		await interaction.editReply('请贴上你的 Trakt 个人页链接（App 里「分享个人资料」的网址），或填用户名。');
-		return;
-	}
-	// Autocomplete only suggests; someone can still send free text.
-	if (!isRegion(region)) {
-		await interaction.editReply('请从选单里选择地区：输入国家名称或代码就会出现，例如「台湾」「香港」「JP」。');
-		return;
-	}
-
-	let history;
+	let subscriber;
 	try {
-		history = await fetchUserMovies(traktUser);
+		subscriber = await store.subscribe(interaction.user.id);
 	}
 	catch (error) {
-		await interaction.editReply(error instanceof TraktUserError ? `订阅失败：${error.message}。` : '暂时连不上 Trakt，请稍后再试。');
-		if (!(error instanceof TraktUserError)) console.warn('[movie] Trakt check failed:', error.message);
+		if (!store.isNoProfile(error)) throw error;
+		await interaction.editReply(
+			[
+				'还没有你的观影档案。先到网站用 Discord 登录，填上 Trakt 个人页和观影地区，再回来按一次 `/movie subscribe`：',
+				SETUP_URL,
+				'（已经用 Google 登录过网站？到「帐号设定」关联这个 Discord 帐号就行。）',
+			].join('\n'),
+		);
 		return;
 	}
-
-	// Keyed by the profile slug (stable); the username is only for display.
-	const traktName = history.profile.username;
-	await store.subscribe(interaction.user.id, history.profile.slug, traktName, region);
 	// Recommendations arrive by DM, so make sure one can actually get through now.
 	const dmOk = await interaction.user
-		.send(`🎬 已订阅电影推荐（Trakt：${traktName}，地区：${regionLabel(region)}）。每天会根据你的观看记录挑新片私信给你。`)
+		.send(`🎬 已订阅电影推荐（Trakt：${subscriber.traktName ?? subscriber.traktUser}，地区：${regionLabel(subscriber.region)}）。每天会根据你的观看记录挑新片私信给你。`)
 		.then(() => true)
 		.catch(() => false);
 	await interaction.editReply(
 		[
-			`已订阅：Trakt「${traktName}」（评分 ${history.ratings.length} 部、看过 ${history.watched.length} 部），地区 ${regionLabel(region)}。`,
-			history.ratings.length < 10 ? '评分的电影还不多，推荐会比较不准；在 Trakt 多评几部会更好。' : null,
+			`已订阅：Trakt「${subscriber.traktName ?? subscriber.traktUser}」，地区 ${regionLabel(subscriber.region)}。要改 Trakt 帐号或地区，到网站的观影页改。`,
 			dmOk ? '推荐会每天私信给你，想马上试试可以用 `/movie check`。' : '⚠️ 私信发送失败：请允许这个 bot 私信你（或把它安装到你的帐号），不然收不到推荐。',
-		]
-			.filter(Boolean)
-			.join('\n'),
+		].join('\n'),
 	);
 }
 
 async function status(interaction) {
 	const subscriber = await store.getSubscriber(interaction.user.id);
 	if (!subscriber) {
-		await interaction.editReply('你还没有订阅，用 `/movie subscribe` 开始。');
+		await interaction.editReply(NOT_SUBSCRIBED);
 		return;
 	}
 	const records = Object.values(await store.userMovies(interaction.user.id));
@@ -78,7 +69,7 @@ async function status(interaction) {
 
 async function check(interaction) {
 	if (!(await store.getSubscriber(interaction.user.id))) {
-		await interaction.editReply('你还没有订阅，用 `/movie subscribe` 开始。');
+		await interaction.editReply(NOT_SUBSCRIBED);
 		return;
 	}
 	const waitMs = (lastCheckAt.get(interaction.user.id) ?? 0) + CHECK_COOLDOWN_MS - Date.now();
@@ -113,29 +104,13 @@ module.exports = {
 	data: new SlashCommandBuilder()
 		.setName('movie')
 		.setDescription('根据 Trakt 观看记录推荐新上映的电影')
-		.addSubcommand((sub) =>
-			sub
-				.setName('subscribe')
-				.setDescription('订阅每天的新片推荐（私信）')
-				.addStringOption((option) => option.setName('trakt').setDescription('Trakt 个人页链接（App 里分享个人资料的网址）或用户名，帐号需公开').setRequired(true))
-				.addStringOption((option) =>
-					option
-						.setName('region')
-						.setDescription('看电影的地区：输入国家名称或代码后从选单选择，例如 台湾、香港、JP')
-						.setRequired(true)
-						.setAutocomplete(true),
-				),
-		)
-		.addSubcommand((sub) => sub.setName('unsubscribe').setDescription('取消订阅'))
+		// The Trakt account and region are set on the website (yohaneowo.com/moviehub); this only turns the DMs on.
+		.addSubcommand((sub) => sub.setName('subscribe').setDescription('订阅每天的新片推荐（私信）；Trakt 帐号和地区在网站上设定'))
+		.addSubcommand((sub) => sub.setName('unsubscribe').setDescription('停止每日推荐（网站上的观影档案保留）'))
 		.addSubcommand((sub) => sub.setName('status').setDescription('查看订阅设定和最近的推荐'))
 		.addSubcommand((sub) => sub.setName('check').setDescription('现在就检查一次新片'))
 		.setIntegrationTypes(ApplicationIntegrationType.GuildInstall, ApplicationIntegrationType.UserInstall)
 		.setContexts(InteractionContextType.Guild, InteractionContextType.BotDM, InteractionContextType.PrivateChannel),
-
-	async autocomplete(interaction) {
-		const focused = interaction.options.getFocused(true);
-		if (focused.name === 'region') await interaction.respond(regionChoices(focused.value));
-	},
 
 	async execute(interaction) {
 		if (!moviesEnabled) {
@@ -149,7 +124,7 @@ module.exports = {
 		else if (subcommand === 'check') {await check(interaction);}
 		else {
 			await store.unsubscribe(interaction.user.id);
-			await interaction.editReply('已取消订阅，不会再收到推荐。');
+			await interaction.editReply('已停止每日推荐。网站上的观影档案和统计还在，想再收推荐随时 `/movie subscribe`。');
 		}
 	},
 };

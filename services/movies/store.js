@@ -11,9 +11,15 @@ function getSubscriber(userId) {
 function listSubscribers() {
 	return movieRequest('GET', '/subscribers');
 }
-function subscribe(userId, traktUser, traktName, region, subscribedAt) {
-	return movieRequest('PUT', `/subscribers/${part(userId)}`, { traktUser, traktName, region, subscribedAt });
+// Turns daily recommendations on for a Discord user whose profile exists (the Trakt account and
+// region are entered on the website and linked to the Discord account there). 404 = no profile yet.
+function subscribe(userId) {
+	return movieRequest('PUT', `/subscribers/${part(userId)}`, {});
 }
+function isNoProfile(error) {
+	return error instanceof Error && /HTTP 404/.test(error.message);
+}
+// Turns the daily recommendations off; the profile and its statistics stay.
 function unsubscribe(userId) {
 	return movieRequest('DELETE', `/subscribers/${part(userId)}`);
 }
@@ -50,4 +56,4 @@ async function fetchPublicRatings(imdbIds) {
 	return result;
 }
 const withSubscription = (subscription, fn) => subscriptionContext.run(subscription, fn);
-module.exports = { withSubscription, getSubscriber, listSubscribers, subscribe, unsubscribe, userMovies, updateMovie, getTaste, readCache, writeCache, fetchPublicRatings };
+module.exports = { withSubscription, getSubscriber, listSubscribers, subscribe, isNoProfile, unsubscribe, userMovies, updateMovie, getTaste, readCache, writeCache, fetchPublicRatings };
