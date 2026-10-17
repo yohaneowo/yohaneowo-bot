@@ -48,6 +48,7 @@
 ## 电影推荐（`services/movies/`）的已知结论
 
 - 观影档案（Trakt 帐号、地区）在网站 yohaneowo.com/moviehub 上建立，存在 admin，以网站帐号为主、Discord 为可选关联；`/movie subscribe` 只会对 admin 发 `PUT /internal/movies/subscribers/{discordId}` 开启每日推荐，404 表示这个 Discord 还没有档案（回 `${SITE_URL}/connect/discord` 链接：网站按登录状态决定用 Discord 登录还是把 Discord 关联到当前帐号，之后授权 Trakt）。`/movie unsubscribe` 只关推荐，不删档案。
+- `/movie recommend`（`services/movies/picks.js`）：随机推荐一部没看过的电影，公开回在频道。推荐池、每天 3 次的额度、30 天不重复、Trakt 写入都在 admin（`movie/recommend.py`，接口 `/internal/movies/picks/*`），bot 只画卡片（Components V2）和处理按钮：`pick:want|seen|next|rate:<pickId>:<userId>`，只有发起人能按。要用这个功能必须在网站授权过 Trakt（admin 回 403 `traktRequired`）；想看 → Trakt watchlist，看过了 → 没评分就吐槽并弹 1–10 菜单再写评分和观看记录。
 - 口味资料（`taste.js` 的 `loadTaste`）由 admin 的统计同步算好存着（最多一天前），bot 不再自己从 Trakt 算；新订阅第一次同步完成前推荐会先跳过。观影统计也由 admin 同步，没有独立 worker。
 - 外部资料一律经 admin 代查：`tmdb.js`、`trakt.js`、`wikipedia.js` 只把请求转给 admin 的 `/internal/movies/sources/*`（admin 持有 key、计用量与额度，见 admin「接口管理 → 第三方接口」）。新增 TMDB / Trakt 路径时，admin 的 `sources/*.py` 白名单也要加。
 
