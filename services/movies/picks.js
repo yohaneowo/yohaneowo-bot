@@ -248,7 +248,7 @@ function ratedMessage(title, rating, pickId, userId, changed, result = null) {
 		? `这次不算额度，今天还能推荐 ${result.remainingToday} 次。`
 		: own && !changed && result?.remainingToday != null ? `今天还能推荐 ${result.remainingToday} 次。` : '';
 	const lead = !own ? `你之前给过《${title}》${rating} 分，` : `${changed ? '改好了' : '记下了'}：《${title}》${rating} 分，`;
-	const buttons = own
+	const actions = own
 		? [
 			new ButtonBuilder().setCustomId(`pick:rerate:${pickId}:${userId}`).setLabel('修改评分').setEmoji('✏️').setStyle(ButtonStyle.Secondary),
 			new ButtonBuilder().setCustomId(`pick:unrate:${pickId}:${userId}`).setLabel('删除评分').setEmoji('🗑️').setStyle(ButtonStyle.Danger),
@@ -256,7 +256,7 @@ function ratedMessage(title, rating, pickId, userId, changed, result = null) {
 		: [];
 	return {
 		content: `✅ ${lead}${written}${quota}`,
-		components: buttons.length ? [new ActionRowBuilder().addComponents(...buttons)] : [],
+		components: actions.length ? [new ActionRowBuilder().addComponents(...actions)] : [],
 	};
 }
 
