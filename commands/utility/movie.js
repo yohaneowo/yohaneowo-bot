@@ -27,7 +27,7 @@ async function subscribe(interaction) {
 		if (!store.isNoProfile(error)) throw error;
 		await interaction.editReply(
 			[
-				'还没有你的观影档案。点下面的链接：没登录过网站的会用 Discord 登录，已经用 Google 登录着的会直接把这个 Discord 关联上去；接着授权 Trakt 帐号、选好地区，再回来按一次 `/movie subscribe`：',
+				'还没有你的观影档案。先到网站用 Discord 登录并连上 Trakt，再回来按一次 `/movie subscribe`：',
 				SETUP_URL,
 			].join('\n'),
 		);
