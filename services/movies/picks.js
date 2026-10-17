@@ -62,9 +62,49 @@ function explain(error) {
 	return null;
 }
 
+// What the admin is doing while a pick takes a while (first call of the day builds the pools).
+const STAGE_TEXT = {
+	lists: '⏳ 正在读取你的 Trakt 记录（看过、评分、想看）…',
+	profile: '⏳ 正在整理口味画像（TMDB 详情）…',
+	pools: '⏳ 正在建候选池：舒适区 / 跨出一步 / 开新坑…',
+	card: '⏳ 正在挑片…',
+};
+const PROGRESS_INTERVAL_MS = 2500;
+// For promise chains whose failure doesn't matter (a status note that couldn't be updated).
+const ignore = () => undefined;
+
 function requestPick(userId, filters, skip) {
 	// The pools may be built on the first call of the day: allow a couple of minutes.
 	return movieRequest('POST', `/picks/${part(userId)}`, { ...filters, ...(skip ? { skip } : {}) }, 180000);
+}
+
+function requestProgress(userId) {
+	return movieRequest('GET', `/picks/${part(userId)}/progress`, undefined, 5000);
+}
+
+// Runs the pick while `show(text)` is called with the current stage every few seconds; the
+// pick's result (or error) is returned once it settles. Progress failures are ignored.
+async function pickWithProgress(userId, filters, skip, show) {
+	const pending = requestPick(userId, filters, skip);
+	let settled = false;
+	const settle = () => {
+		settled = true;
+	};
+	pending.then(settle, settle);
+	let lastText = null;
+	const started = Date.now();
+	while (!settled) {
+		await new Promise((resolve) => setTimeout(resolve, PROGRESS_INTERVAL_MS));
+		if (settled) break;
+		const stage = await requestProgress(userId).then((p) => p?.stage ?? null).catch(() => null);
+		const elapsed = Math.round((Date.now() - started) / 1000);
+		const text = `${STAGE_TEXT[stage] ?? STAGE_TEXT.card}${elapsed >= 10 ? ` (${elapsed} 秒)` : ''}`;
+		if (text !== lastText) {
+			lastText = text;
+			await show(text).catch(ignore);
+		}
+	}
+	return pending;
 }
 
 function markWant(userId, pickId) {
@@ -137,11 +177,20 @@ function remember(card, filters) {
 	}
 }
 
-// /movie recommend: resolves to the reply payload.
-async function recommend(userId, filters) {
-	const card = await requestPick(userId, filters);
+// /movie recommend: resolves to the reply payload; `show(text)` updates the waiting message.
+async function recommend(userId, filters, show) {
+	const card = await pickWithProgress(userId, filters, null, show);
 	remember(card, filters);
+	console.info(`[movie] Pick for ${userId}: ${card.mode} → ${card.title} (${card.tmdbId}), ${card.remainingToday} left today`);
 	return cardMessage(card, filters, userId);
+}
+
+// After a rating is written: the confirmation plus a button to change it.
+function ratedMessage(title, rating, pickId, userId, changed) {
+	return {
+		content: `✅ ${changed ? '改好了' : '记下了'}：《${title}》${rating} 分，已标记看过并写进 Trakt。`,
+		components: [new ActionRowBuilder().addComponents(new ButtonBuilder().setCustomId(`pick:rerate:${pickId}:${userId}`).setLabel('修改评分').setEmoji('✏️').setStyle(ButtonStyle.Secondary))],
+	};
 }
 
 function ratingMenu(pickId, userId) {
@@ -163,20 +212,35 @@ async function handlePickInteraction(interaction) {
 	const filters = filtersByPick.get(pickId) ?? {};
 	if (action === 'next') {
 		await interaction.deferUpdate();
+		// The card stays; a private note shows the stages and is removed when the new card lands.
+		let note = null;
+		const show = async (text) => {
+			if (note) await interaction.webhook.editMessage(note.id, { content: text });
+			else note = await interaction.followUp({ content: text, flags: MessageFlags.Ephemeral });
+		};
 		try {
-			const next = await requestPick(ownerId, filters, pickId);
+			const next = await pickWithProgress(ownerId, filters, pickId, show);
 			remember(next, filters);
+			console.info(`[movie] Next pick for ${ownerId}: ${next.mode} → ${next.title} (${next.tmdbId}), ${next.remainingToday} left today`);
 			await interaction.editReply(cardMessage(next, filters, ownerId));
+			if (note) await interaction.webhook.deleteMessage(note.id).catch(ignore);
 		}
 		catch (error) {
 			const text = explain(error);
 			if (!text) throw error;
-			await interaction.followUp({ content: text, flags: MessageFlags.Ephemeral });
+			if (note) await interaction.webhook.editMessage(note.id, { content: text });
+			else await interaction.followUp({ content: text, flags: MessageFlags.Ephemeral });
 		}
+		return;
+	}
+	if (action === 'rerate') {
+		// Back to the menu; the next pick:rate overwrites the rating on Trakt.
+		await interaction.update({ content: `换个分数给《${card?.title ?? '这部'}》：`, components: [ratingMenu(pickId, ownerId)] });
 		return;
 	}
 	if (action === 'rate') {
 		const rating = Number(interaction.values?.[0]);
+		const changed = /^✅/.test(interaction.message?.content ?? '') || /换个分数/.test(interaction.message?.content ?? '');
 		await interaction.deferUpdate();
 		try {
 			await markWatched(ownerId, pickId, rating);
@@ -187,21 +251,24 @@ async function handlePickInteraction(interaction) {
 			await interaction.followUp({ content: text, flags: MessageFlags.Ephemeral });
 			return;
 		}
-		await interaction.editReply({ content: `✅ 记下了：《${card?.title ?? '这部'}》${rating} 分，已标记看过并写进 Trakt。`, components: [] });
+		console.info(`[movie] Rated for ${ownerId}: ${card?.title ?? pickId} → ${rating}${changed ? ' (changed)' : ''}`);
+		await interaction.editReply(ratedMessage(card?.title ?? '这部', rating, pickId, ownerId, changed));
 		return;
 	}
 	await interaction.deferUpdate();
 	try {
 		if (action === 'want') {
 			await markWant(ownerId, pickId);
+			console.info(`[movie] Want for ${ownerId}: ${card?.title ?? pickId}`);
 			if (card) await interaction.editReply(cardMessage(card, filters, ownerId, 'want'));
 			await interaction.followUp({ content: `👍 《${card?.title ?? '这部'}》已加进你的 Trakt 想看列表。` });
 		}
 		else if (action === 'seen') {
 			const result = await markWatched(ownerId, pickId, null);
 			if (result.rated) {
+				console.info(`[movie] Seen for ${ownerId}: ${card?.title ?? pickId} (already rated ${result.rating})`);
 				if (card) await interaction.editReply(cardMessage(card, filters, ownerId, 'seen'));
-				await interaction.followUp({ content: `✅ 你给过《${card?.title ?? '这部'}》${result.rating} 分，已标记看过。` });
+				await interaction.followUp(ratedMessage(card?.title ?? '这部', result.rating, pickId, ownerId, false));
 			}
 			else {
 				// Not rated: the card waits; the rating menu finishes the job.
