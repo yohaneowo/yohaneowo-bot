@@ -54,7 +54,9 @@ async function recommend(interaction) {
 		maxRuntime: interaction.options.getInteger('max_runtime') ?? undefined,
 	};
 	try {
-		await interaction.editReply(await picks.recommend(interaction.user.id, filters, (text) => interaction.editReply(text)));
+		const { payload, pickId } = await picks.recommend(interaction.user.id, filters, (text) => interaction.editReply(text));
+		const message = await interaction.editReply(payload);
+		picks.rememberMessage(pickId, message);
 	}
 	catch (error) {
 		const text = picks.explain(error);

@@ -145,6 +145,11 @@ function markWatched(userId, pickId, rating) {
 	return movieRequest('POST', `/picks/${part(userId)}/${part(pickId)}/watched`, rating == null ? {} : { rating });
 }
 
+// 删除评分: admin removes the rating (and the play 看过了 added) from Trakt and takes the refund back.
+function unrate(userId, pickId) {
+	return movieRequest('POST', `/picks/${part(userId)}/${part(pickId)}/unrate`, {});
+}
+
 function cardText(card, filters) {
 	const meta = [
 		card.genres?.length ? card.genres.slice(0, 3).join(' / ') : null,
@@ -223,24 +228,48 @@ async function recommend(userId, filters, show) {
 	const card = await pickWithProgress(userId, filters, null, show);
 	remember(card, filters);
 	console.info(`[movie] Pick for ${userId}: ${card.mode} → ${card.title} (${card.tmdbId}), ${card.remainingToday} left today`);
-	return cardMessage(card, filters, userId);
+	return { payload: cardMessage(card, filters, userId), pickId: card.pickId };
+}
+
+// The card's own message, once the reply exists, so later answers can redraw its buttons.
+function rememberMessage(pickId, message) {
+	const card = cardsByPick.get(pickId);
+	if (card && message?.id) card.messageId = message.id;
 }
 
 // After a rating is written: the confirmation plus a button to change it.
+// After a rating: what was written, whether the pick was given back, and the ways to change
+// one's mind. A rating the person had given earlier (result.own false) is theirs, not ours to
+// remove, and earns no refund.
 function ratedMessage(title, rating, pickId, userId, changed, result = null) {
-	const refund = result?.refunded ? `这次不算额度，今天还能推荐 ${result.remainingToday} 次。` : '';
+	const own = result?.own !== false;
+	const written = result?.action === 'rated' ? '已写进 Trakt。' : own ? '已标记看过并写进 Trakt。' : '已标记看过。';
+	const quota = result?.refunded
+		? `这次不算额度，今天还能推荐 ${result.remainingToday} 次。`
+		: own && !changed && result?.remainingToday != null ? `今天还能推荐 ${result.remainingToday} 次。` : '';
+	const lead = !own ? `你之前给过《${title}》${rating} 分，` : `${changed ? '改好了' : '记下了'}：《${title}》${rating} 分，`;
+	const buttons = own
+		? [
+			new ButtonBuilder().setCustomId(`pick:rerate:${pickId}:${userId}`).setLabel('修改评分').setEmoji('✏️').setStyle(ButtonStyle.Secondary),
+			new ButtonBuilder().setCustomId(`pick:unrate:${pickId}:${userId}`).setLabel('删除评分').setEmoji('🗑️').setStyle(ButtonStyle.Danger),
+		]
+		: [];
 	return {
-		content: `✅ ${changed ? '改好了' : '记下了'}：《${title}》${rating} 分，${result?.action === 'rated' ? '已写进 Trakt。' : '已标记看过并写进 Trakt。'}${refund}`,
-		components: [new ActionRowBuilder().addComponents(new ButtonBuilder().setCustomId(`pick:rerate:${pickId}:${userId}`).setLabel('修改评分').setEmoji('✏️').setStyle(ButtonStyle.Secondary))],
+		content: `✅ ${lead}${written}${quota}`,
+		components: buttons.length ? [new ActionRowBuilder().addComponents(...buttons)] : [],
 	};
 }
 
+// The 1–10 menu, with a way out for a 看过了 pressed by mistake.
 function ratingMenu(pickId, userId) {
 	const menu = new StringSelectMenuBuilder()
 		.setCustomId(`pick:rate:${pickId}:${userId}`)
 		.setPlaceholder('选一个分数（1–10）')
 		.addOptions(...[10, 9, 8, 7, 6, 5, 4, 3, 2, 1].map((n) => new StringSelectMenuOptionBuilder().setLabel(`${n} 分`).setValue(String(n)).setEmoji(n >= 8 ? '🌟' : n >= 6 ? '👍' : '😐')));
-	return new ActionRowBuilder().addComponents(menu);
+	return [
+		new ActionRowBuilder().addComponents(menu),
+		new ActionRowBuilder().addComponents(new ButtonBuilder().setCustomId(`pick:cancelrate:${pickId}:${userId}`).setLabel('取消').setEmoji('✖️').setStyle(ButtonStyle.Secondary)),
+	];
 }
 
 // Buttons (pick:want / pick:seen / pick:next) and the rating menu (pick:rate).
@@ -272,6 +301,7 @@ async function handlePickInteraction(interaction) {
 		try {
 			const next = await pickWithProgress(ownerId, filters, pickId, show);
 			remember(next, filters);
+			rememberMessage(next.pickId, interaction.message);
 			console.info(`[movie] Next pick for ${ownerId}: ${next.mode} → ${next.title} (${next.tmdbId}), ${next.remainingToday} left today`);
 			await interaction.editReply(cardMessage(next, filters, ownerId));
 			if (note) await interaction.webhook.deleteMessage(note.id).catch(ignore);
@@ -285,12 +315,37 @@ async function handlePickInteraction(interaction) {
 		return;
 	}
 	if (action === 'rateprompt') {
-		await interaction.reply({ content: `给《${card?.title ?? '这部'}》打个分：`, components: [ratingMenu(pickId, ownerId)] });
+		await interaction.reply({ content: `给《${card?.title ?? '这部'}》打个分：`, components: ratingMenu(pickId, ownerId) });
 		return;
 	}
 	if (action === 'rerate') {
 		// Back to the menu; the next pick:rate overwrites the rating on Trakt.
-		await interaction.update({ content: `换个分数给《${card?.title ?? '这部'}》：`, components: [ratingMenu(pickId, ownerId)] });
+		await interaction.update({ content: `换个分数给《${card?.title ?? '这部'}》：`, components: ratingMenu(pickId, ownerId) });
+		return;
+	}
+	if (action === 'cancelrate') {
+		// Nothing was written yet (or, after 修改评分, the old rating stays). The card is untouched.
+		await interaction.update({ content: '已取消，没有写入任何东西。', components: [] });
+		return;
+	}
+	if (action === 'unrate') {
+		await interaction.deferUpdate();
+		let result;
+		try {
+			result = await unrate(ownerId, pickId);
+		}
+		catch (error) {
+			const text = explain(error);
+			if (!text) throw error;
+			await interaction.followUp({ content: text, flags: MessageFlags.Ephemeral });
+			return;
+		}
+		console.info(`[movie] Unrated for ${ownerId}: ${result.title ?? pickId}, ${result.remainingToday} left today`);
+		await interaction.editReply({
+			content: `🗑️ 已删除《${result.title ?? '这部'}》的评分和这次的观看记录，退还的额度也收回了（今天还能推荐 ${result.remainingToday} 次）。`,
+			components: [],
+		});
+		if (card) await interaction.message?.channel?.messages?.fetch?.(card.messageId).then((m) => m.edit(cardMessage(card, filters, ownerId))).catch(ignore);
 		return;
 	}
 	if (action === 'rate') {
@@ -307,8 +362,9 @@ async function handlePickInteraction(interaction) {
 			await interaction.followUp({ content: text, flags: MessageFlags.Ephemeral });
 			return;
 		}
-		console.info(`[movie] Rated for ${ownerId}: ${card?.title ?? pickId} → ${rating}${changed ? ' (changed)' : ''}${result?.refunded ? ' (refunded)' : ''}`);
-		await interaction.editReply(ratedMessage(card?.title ?? '这部', rating, pickId, ownerId, changed, result));
+		const title = result?.title ?? card?.title ?? '这部';
+		console.info(`[movie] Rated for ${ownerId}: ${title} → ${rating}${changed ? ' (changed)' : ''}${result?.refunded ? ' (refunded)' : ''}`);
+		await interaction.editReply(ratedMessage(title, rating, pickId, ownerId, changed, result));
 		return;
 	}
 	await interaction.deferUpdate();
@@ -321,16 +377,17 @@ async function handlePickInteraction(interaction) {
 		}
 		else if (action === 'seen') {
 			const result = await markWatched(ownerId, pickId, null);
+			const title = result?.title ?? card?.title ?? '这部';
 			if (result.rated) {
-				console.info(`[movie] Seen for ${ownerId}: ${card?.title ?? pickId} (already rated ${result.rating})`);
+				console.info(`[movie] Seen for ${ownerId}: ${title} (already rated ${result.rating})`);
 				if (card) await interaction.editReply(cardMessage(card, filters, ownerId, 'seen'));
-				await interaction.followUp(ratedMessage(card?.title ?? '这部', result.rating, pickId, ownerId, false));
+				await interaction.followUp(ratedMessage(title, result.rating, pickId, ownerId, false, result));
 			}
 			else {
-				// Not rated: the card waits; the rating menu finishes the job.
+				// Not rated: the card waits; the rating menu finishes the job (or 取消 drops it).
 				await interaction.followUp({
-					content: UNRATED_TEASES[Math.floor(Math.random() * UNRATED_TEASES.length)](card?.title ?? '这部'),
-					components: [ratingMenu(pickId, ownerId)],
+					content: UNRATED_TEASES[Math.floor(Math.random() * UNRATED_TEASES.length)](title),
+					components: ratingMenu(pickId, ownerId),
 				});
 			}
 		}
@@ -342,4 +399,4 @@ async function handlePickInteraction(interaction) {
 	}
 }
 
-module.exports = { GENRES, DECADES, recommend, explain, handlePickInteraction };
+module.exports = { GENRES, DECADES, recommend, rememberMessage, explain, handlePickInteraction };
