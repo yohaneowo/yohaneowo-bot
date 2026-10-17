@@ -135,10 +135,11 @@ async function answer(interaction, subscriber, tmdbId, record) {
 }
 
 // Button customId movie:ask:<tmdbId>.
-async function handleAskButton(interaction, tmdbId) {
+// fallbackRecord: for a /movie recommend card, which has no daily record (title and reason).
+async function handleAskButton(interaction, tmdbId, fallbackRecord = null) {
 	await interaction.deferReply({ flags: MessageFlags.Ephemeral });
 	const userId = interaction.user.id;
-	const record = (await store.userMovies(userId))[tmdbId];
+	const record = (await store.userMovies(userId))[tmdbId] ?? fallbackRecord;
 	const subscriber = await store.getSubscriber(userId);
 	if (!aiEnabled || !subscriber || !record) {
 		await interaction.editReply({ content: aiEnabled ? '找不到这则推荐的记录。' : 'AI 还没有设定好。' });
