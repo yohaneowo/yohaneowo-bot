@@ -153,7 +153,7 @@ function buttons(card, userId, chosen) {
 		new ButtonBuilder().setCustomId(id('next')).setLabel('换一部').setEmoji('🔁').setStyle(ButtonStyle.Secondary).setDisabled(Boolean(chosen) || !(card.remainingToday > 0)),
 		// Anyone with a profile may ask; the answer uses the asker's own taste and is private.
 		...(aiEnabled ? [new ButtonBuilder().setCustomId(id('ask')).setLabel('AI 怎么看').setEmoji('💬').setStyle(ButtonStyle.Secondary)] : []),
-		new ButtonBuilder().setLabel('Trakt').setEmoji('🔗').setStyle(ButtonStyle.Link).setURL(`https://trakt.tv/search/tmdb/${card.tmdbId}?id_type=movie`),
+		new ButtonBuilder().setLabel('Trakt').setEmoji('🔗').setStyle(ButtonStyle.Link).setURL(card.traktUrl ?? `https://trakt.tv/search?query=${encodeURIComponent(card.originalTitle ?? card.title)}`),
 	);
 }
 

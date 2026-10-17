@@ -113,7 +113,7 @@ async function fetchMovieStatus(userSlug, tmdbId) {
 	return {
 		rating: ratings.find(isThis)?.rating ?? null,
 		watched: watched.some(isThis),
-		url: movieSlug ? `https://trakt.tv/movies/${movieSlug}` : `https://trakt.tv/search/tmdb/${tmdbId}?id_type=movie`,
+		url: movieSlug ? `https://trakt.tv/movies/${movieSlug}` : `https://trakt.tv/search?query=${encodeURIComponent(String(tmdbId))}`,
 	};
 }
 

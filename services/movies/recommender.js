@@ -401,7 +401,7 @@ async function nudgeToRate(interaction, tmdbId, title) {
 	}
 	catch (error) {
 		console.warn(`[movie] Trakt status for ${tmdbId} failed:`, error.message);
-		content = `记得到 Trakt 给《${title}》评个分，推荐才会越来越准：https://trakt.tv/search/tmdb/${tmdbId}?id_type=movie`;
+		content = `记得到 Trakt 给《${title}》评个分，推荐才会越来越准：https://trakt.tv/search?query=${encodeURIComponent(title)}`;
 	}
 	// Keep the link from unfurling into a big preview under the reply.
 	await interaction.followUp({ content: content.replace(/(https:\/\/\S+)/, '<$1>'), flags: MessageFlags.Ephemeral });
