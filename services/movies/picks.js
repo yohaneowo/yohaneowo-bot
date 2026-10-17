@@ -19,7 +19,9 @@ const { aiEnabled } = require('./claude');
 // /movie recommend: admin keeps the candidate pools, the quota and the Trakt writes (see admin's
 // movie/recommend.py); this file is the Discord side: the card, its buttons and the rating menu.
 const SITE_URL = process.env.SITE_URL || 'https://yohaneowo.com';
-const CONNECT_URL = `${SITE_URL}/moviehub`;
+// The site's smart link: signs in with Discord when signed out, links Discord to a Google account
+// when signed in, then lands on the movie page (where Trakt is authorized).
+const CONNECT_URL = `${SITE_URL}/connect/discord`;
 const ACCENT_COLOR = 0xe5a00d;
 const part = (value) => encodeURIComponent(value);
 
@@ -54,12 +56,12 @@ function errorKind(error) {
 function explain(error) {
 	const kind = errorKind(error);
 	if (!kind) return null;
-	if (kind.status === 404 && kind.code !== 'nothingToPick' && kind.code !== 'pickNotFound') return `还没有你的观影档案。先到网站用 Discord 登录并连上 Trakt：${CONNECT_URL}`;
-	if (kind.status === 403) return `这个功能要先在网站授权 Trakt（想看、看过了会直接写进你的 Trakt）：${CONNECT_URL}`;
+	if (kind.status === 404 && kind.code !== 'nothingToPick' && kind.code !== 'pickNotFound') return `还没有你的观影档案。点这个链接用 Discord 登录网站、授权 Trakt，弄好再回来按一次：${CONNECT_URL}`;
+	if (kind.status === 403) return `这个功能要先授权 Trakt（想看、看过了会直接写进你的 Trakt）。点这个链接，到观影页按「授权 Trakt」：${CONNECT_URL}`;
 	if (kind.status === 429) return LIMIT_TEASES[Math.floor(Math.random() * LIMIT_TEASES.length)];
 	if (kind.code === 'nothingToPick') return '这个条件下找不到可以推荐的片，换个类型或年代试试。';
 	if (kind.code === 'pickNotFound') return '找不到这则推荐的记录。';
-	if (kind.status === 502) return `Trakt 不认这个授权了，请到网站重新授权：${CONNECT_URL}`;
+	if (kind.status === 502) return `Trakt 不认这个授权了，请到观影页重新授权：${CONNECT_URL}`;
 	if (kind.status === 503) return 'Trakt 或 TMDB 暂时连不上，稍后再试。';
 	return null;
 }
