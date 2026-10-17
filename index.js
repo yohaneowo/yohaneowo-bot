@@ -8,6 +8,7 @@ const { extractMediaUrls, isOnlyMediaUrls } = require('./services/media');
 const { setupVoiceHubs } = require('./services/voiceHubs');
 const { setupVoiceLog } = require('./services/voiceLog');
 const { moviesEnabled, runDaily: runDailyMovies, handleFeedbackButton } = require('./services/movies/recommender');
+const { handlePickInteraction } = require('./services/movies/picks');
 const {
 	INITIAL_STATUS,
 	isMediaQueueFull,
@@ -287,6 +288,10 @@ client.on(Events.InteractionCreate, async (interaction) => {
 	}
 	if (interaction.isButton() && interaction.customId.startsWith('movie:')) {
 		await handleFeedbackButton(interaction).catch((error) => console.warn('[movie] Feedback button failed:', error.message));
+		return;
+	}
+	if ((interaction.isButton() || interaction.isStringSelectMenu()) && interaction.customId.startsWith('pick:')) {
+		await handlePickInteraction(interaction).catch((error) => console.warn('[movie] Pick interaction failed:', error.message));
 		return;
 	}
 	if (!interaction.isChatInputCommand() && !interaction.isMessageContextMenuCommand()) return;

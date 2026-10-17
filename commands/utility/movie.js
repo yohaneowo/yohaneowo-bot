@@ -8,6 +8,7 @@ const store = require('../../services/movies/store');
 const { TraktUserError } = require('../../services/movies/trakt');
 const { moviesEnabled, runNow } = require('../../services/movies/recommender');
 const { regionLabel } = require('../../services/movies/regions');
+const picks = require('../../services/movies/picks');
 
 // Trakt details are entered on the website; a profile is found here through the Discord account linked there.
 const SITE_URL = process.env.SITE_URL || 'https://yohaneowo.com';
@@ -44,6 +45,26 @@ async function subscribe(interaction) {
 			dmOk ? '推荐会每天私信给你，想马上试试可以用 `/movie check`。' : '⚠️ 私信发送失败：请允许这个 bot 私信你（或把它安装到你的帐号），不然收不到推荐。',
 		].join('\n'),
 	);
+}
+
+async function recommend(interaction) {
+	const filters = {
+		genre: interaction.options.getInteger('genre') ?? undefined,
+		decade: interaction.options.getInteger('decade') ?? undefined,
+		maxRuntime: interaction.options.getInteger('max_runtime') ?? undefined,
+	};
+	try {
+		await interaction.editReply(await picks.recommend(interaction.user.id, filters));
+	}
+	catch (error) {
+		const text = picks.explain(error);
+		if (!text) {
+			console.warn('[movie] Recommend failed:', error.message);
+			await interaction.editReply('推荐失败了，请稍后再试。');
+			return;
+		}
+		await interaction.editReply(text);
+	}
 }
 
 async function status(interaction) {
@@ -108,6 +129,14 @@ module.exports = {
 		.addSubcommand((sub) => sub.setName('unsubscribe').setDescription('停止每日推荐（网站上的观影档案保留）'))
 		.addSubcommand((sub) => sub.setName('status').setDescription('查看订阅设定和最近的推荐'))
 		.addSubcommand((sub) => sub.setName('check').setDescription('现在就检查一次新片'))
+		.addSubcommand((sub) =>
+			sub
+				.setName('recommend')
+				.setDescription('随机推荐一部你没看过的电影（每天 3 部，想看 / 看过了会写进 Trakt）')
+				.addIntegerOption((option) => option.setName('genre').setDescription('只在这个类型里挑').addChoices(...picks.GENRES.map(([value, name]) => ({ name, value }))))
+				.addIntegerOption((option) => option.setName('decade').setDescription('只挑这个年代的').addChoices(...picks.DECADES.map((decade) => ({ name: `${decade} 年代`, value: decade }))))
+				.addIntegerOption((option) => option.setName('max_runtime').setDescription('最长片长（分钟）').setMinValue(30).setMaxValue(600)),
+		)
 		.setIntegrationTypes(ApplicationIntegrationType.GuildInstall, ApplicationIntegrationType.UserInstall)
 		.setContexts(InteractionContextType.Guild, InteractionContextType.BotDM, InteractionContextType.PrivateChannel),
 
@@ -116,8 +145,14 @@ module.exports = {
 			await interaction.reply({ content: '电影推荐还没有设定好（缺少 TMDB 或 Trakt 的 API key）。', flags: MessageFlags.Ephemeral });
 			return;
 		}
-		await interaction.deferReply({ flags: MessageFlags.Ephemeral });
 		const subcommand = interaction.options.getSubcommand();
+		if (subcommand === 'recommend') {
+			// Public on purpose: the card and its buttons stay in the channel for everyone to see.
+			await interaction.deferReply();
+			await recommend(interaction);
+			return;
+		}
+		await interaction.deferReply({ flags: MessageFlags.Ephemeral });
 		if (subcommand === 'subscribe') {await subscribe(interaction);}
 		else if (subcommand === 'status') {await status(interaction);}
 		else if (subcommand === 'check') {await check(interaction);}
