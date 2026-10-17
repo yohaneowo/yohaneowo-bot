@@ -36,7 +36,7 @@
   有人进入入口，bot 会在同一个分类开一个「<名字> 的频道」（不限人数，权限跟随分类）并把人移过去；这个频道没人后 10 秒自动删除。
   不需要入口时直接删除那个频道即可。入口和临时频道记在 `data/voice-hubs.json`，bot 重启后会继续管理，离线期间空掉的频道也会在启动后删除。
 
-- **电影推荐**：先到 [yohaneowo.com/moviehub](https://yohaneowo.com/moviehub) 用 Discord 登录（或用 Google 登录后在帐号设定关联 Discord），填上公开的 Trakt 个人页和观影地区建立观影档案；然后在 Discord 用 `/movie subscribe` 开启每日推荐。每天早上 10 点（台湾时间）：
+- **电影推荐**：先到 [yohaneowo.com/connect/discord](https://yohaneowo.com/connect/discord) 用 Discord 登录（已经用 Google 登录着的会直接把 Discord 关联上去），再授权 Trakt 帐号、选观影地区建立观影档案；然后在 Discord 用 `/movie subscribe` 开启每日推荐。每天早上 10 点（台湾时间）：
   1. 之前以「即将上映」推荐过、现在上映了的电影，加进今天的提醒；
   2. 该地区正在上映、还没判断过的电影，用规则（类型兴趣、评分偏好、喜欢的导演与演员、口碑、热门度）排出最合适的几部；
   3. 新出现的即将上映电影也一样排名；

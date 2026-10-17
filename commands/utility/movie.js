@@ -11,7 +11,7 @@ const { regionLabel } = require('../../services/movies/regions');
 
 // Trakt details are entered on the website; a profile is found here through the Discord account linked there.
 const SITE_URL = process.env.SITE_URL || 'https://yohaneowo.com';
-const SETUP_URL = `${SITE_URL}/moviehub`;
+const SETUP_URL = `${SITE_URL}/connect/discord`;
 const NOT_SUBSCRIBED = `你还没有订阅。先在网站建立观影档案（${SETUP_URL}），再用 \`/movie subscribe\` 开启推荐。`;
 
 // /movie check runs the whole pipeline (TMDB, Trakt, AI), so keep it from being spammed.
@@ -27,9 +27,8 @@ async function subscribe(interaction) {
 		if (!store.isNoProfile(error)) throw error;
 		await interaction.editReply(
 			[
-				'还没有你的观影档案。先到网站用 Discord 登录，填上 Trakt 个人页和观影地区，再回来按一次 `/movie subscribe`：',
+				'还没有你的观影档案。点下面的链接：没登录过网站的会用 Discord 登录，已经用 Google 登录着的会直接把这个 Discord 关联上去；接着授权 Trakt 帐号、选好地区，再回来按一次 `/movie subscribe`：',
 				SETUP_URL,
-				'（已经用 Google 登录过网站？到「帐号设定」关联这个 Discord 帐号就行。）',
 			].join('\n'),
 		);
 		return;
