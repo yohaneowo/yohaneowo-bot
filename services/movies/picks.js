@@ -13,6 +13,8 @@ const {
 	ThumbnailBuilder,
 } = require('discord.js');
 const { movieRequest } = require('../adminApi');
+const { handleAskButton } = require('./ask');
+const { aiEnabled } = require('./claude');
 
 // /movie recommend: admin keeps the candidate pools, the quota and the Trakt writes (see admin's
 // movie/recommend.py); this file is the Discord side: the card, its buttons and the rating menu.
@@ -133,7 +135,7 @@ function cardText(card, filters) {
 		`## 🎲 随机推荐 · ${MODE_LABELS[card.mode] ?? card.mode}${asked.length ? `\n-# 条件：${asked.join(' · ')}` : ''}`,
 		`### [《${card.title}》](https://www.themoviedb.org/movie/${card.tmdbId})${card.year ? `（${card.year}）` : ''}${original}`,
 		meta.length ? `-# ${meta.join(' · ')}` : null,
-		`> ${card.reason}${card.inWatchlist ? '\n> 已在你的想看列表' : ''}`,
+		`> ${card.reason}${card.ai ? ' ✨' : ''}${card.inWatchlist ? '\n> 已在你的想看列表' : ''}`,
 		card.overview ? (card.overview.length > 300 ? `${card.overview.slice(0, 300)}…` : card.overview) : null,
 		[score, card.remainingToday > 0 ? `今天还能换 ${card.remainingToday} 次` : '今天的额度用完了'].filter(Boolean).map((text) => `-# ${text}`).join('\n'),
 	]
@@ -149,6 +151,8 @@ function buttons(card, userId, chosen) {
 		new ButtonBuilder().setCustomId(id('want')).setLabel('想看').setEmoji('👍').setStyle(style('want', ButtonStyle.Primary)).setDisabled(Boolean(chosen)),
 		new ButtonBuilder().setCustomId(id('seen')).setLabel('看过了').setEmoji('✅').setStyle(style('seen', ButtonStyle.Secondary)).setDisabled(Boolean(chosen)),
 		new ButtonBuilder().setCustomId(id('next')).setLabel('换一部').setEmoji('🔁').setStyle(ButtonStyle.Secondary).setDisabled(Boolean(chosen) || !(card.remainingToday > 0)),
+		// Anyone with a profile may ask; the answer uses the asker's own taste and is private.
+		...(aiEnabled ? [new ButtonBuilder().setCustomId(id('ask')).setLabel('AI 怎么看').setEmoji('💬').setStyle(ButtonStyle.Secondary)] : []),
 		new ButtonBuilder().setLabel('Trakt').setEmoji('🔗').setStyle(ButtonStyle.Link).setURL(`https://trakt.tv/search/tmdb/${card.tmdbId}?id_type=movie`),
 	);
 }
@@ -204,6 +208,15 @@ function ratingMenu(pickId, userId) {
 // Buttons (pick:want / pick:seen / pick:next) and the rating menu (pick:rate).
 async function handlePickInteraction(interaction) {
 	const [, action, pickId, ownerId] = interaction.customId.split(':');
+	if (action === 'ask') {
+		const asked = cardsByPick.get(pickId);
+		if (!asked) {
+			await interaction.reply({ content: '这张卡片太旧了，找不到它的资料；再 `/movie recommend` 一次吧。', flags: MessageFlags.Ephemeral });
+			return;
+		}
+		await handleAskButton(interaction, asked.tmdbId, { title: asked.title, reason: asked.reason });
+		return;
+	}
 	if (interaction.user.id !== ownerId) {
 		await interaction.reply({ content: '这是别人的推荐，用 `/movie recommend` 拿一部你自己的。', flags: MessageFlags.Ephemeral });
 		return;
