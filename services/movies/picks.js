@@ -164,7 +164,9 @@ function cardMessage(card, filters, userId, chosen = null) {
 	else container.addTextDisplayComponents(text);
 	container.addSeparatorComponents(new SeparatorBuilder().setSpacing(SeparatorSpacingSize.Small));
 	container.addActionRowComponents(buttons(card, userId, chosen));
-	return { components: [container], flags: MessageFlags.IsComponentsV2 };
+	// content is cleared explicitly: the reply may be holding a text status, and a Components V2
+	// message must not carry content (Discord answers "Invalid Form Body" otherwise).
+	return { content: '', embeds: [], components: [container], flags: MessageFlags.IsComponentsV2 };
 }
 
 // The pick and its message carry each other: the card is kept per message to redraw buttons.
