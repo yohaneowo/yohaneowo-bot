@@ -208,6 +208,8 @@ TMDB、Trakt、Anthropic、Voyage 的 key 都不在这里：电影功能的 TMDB
 
 ## 开发（测试 bot，`develop` 分支）
 
+> 测试 bot 现在跟稳定版一样跑在 Coolify 上：push `develop` 就会自动部署 `yohaneowo-bot-dev`（Doppler `stg`，LINE webhook 在 `https://line-dev.yohaneowo.com/webhook`）。本机用下面的方式跑之前，要先在 Coolify 停掉 `yohaneowo-bot-dev`，否则同一个 token 会有两个实例。
+
 本机需要 Node 22+、ffmpeg，以及带 curl-cffi 的 yt-dlp（TikTok 需要模拟浏览器，否则会被拦截）：
 
 ```bash
