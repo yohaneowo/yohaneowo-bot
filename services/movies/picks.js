@@ -77,9 +77,28 @@ const PROGRESS_INTERVAL_MS = 2500;
 // For promise chains whose failure doesn't matter (a status note that couldn't be updated).
 const ignore = () => undefined;
 
+// The pools may be built on the first call of the day; Discord lets a deferred reply wait 15 minutes.
+const PICK_TIMEOUT_MS = 300000;
+
 function requestPick(userId, filters, skip) {
-	// The pools may be built on the first call of the day: allow a couple of minutes.
-	return movieRequest('POST', `/picks/${part(userId)}`, { ...filters, ...(skip ? { skip } : {}) }, 180000);
+	return movieRequest('POST', `/picks/${part(userId)}`, { ...filters, ...(skip ? { skip } : {}) }, PICK_TIMEOUT_MS);
+}
+
+function listPicks(userId) {
+	return movieRequest('GET', `/picks/${part(userId)}`, undefined, 15000);
+}
+
+// A pick admin recorded while this side had already given up waiting: the newest unanswered one
+// from the last few minutes, as the card payload the reply needs. Null when there is none.
+async function recoverPick(userId, since) {
+	const listed = await listPicks(userId).catch(() => null);
+	const fresh = (listed?.picks ?? []).find((p) => !p.action && p.card && p.shownAt && Date.parse(`${p.shownAt}Z`) >= since - 60000);
+	if (!fresh) return null;
+	return { ...fresh.card, pickId: fresh.pickId, mode: fresh.mode, reason: fresh.reason, remainingToday: listed.remainingToday };
+}
+
+function isTimeout(error) {
+	return error?.name === 'TimeoutError' || /timeout|aborted/i.test(error?.message ?? '');
 }
 
 function requestProgress(userId) {
@@ -89,14 +108,21 @@ function requestProgress(userId) {
 // Runs the pick while `show(text)` is called with the current stage every few seconds; the
 // pick's result (or error) is returned once it settles. Progress failures are ignored.
 async function pickWithProgress(userId, filters, skip, show) {
-	const pending = requestPick(userId, filters, skip);
+	const started = Date.now();
+	const pending = requestPick(userId, filters, skip).catch(async (error) => {
+		// Admin may still have finished and recorded the pick after our wait ran out.
+		if (!isTimeout(error)) throw error;
+		const recovered = await recoverPick(userId, started);
+		if (!recovered) throw error;
+		console.warn(`[movie] Pick for ${userId} took longer than ${PICK_TIMEOUT_MS / 1000}s; recovered it from the pick list.`);
+		return recovered;
+	});
 	let settled = false;
 	const settle = () => {
 		settled = true;
 	};
 	pending.then(settle, settle);
 	let lastText = null;
-	const started = Date.now();
 	while (!settled) {
 		await new Promise((resolve) => setTimeout(resolve, PROGRESS_INTERVAL_MS));
 		if (settled) break;
