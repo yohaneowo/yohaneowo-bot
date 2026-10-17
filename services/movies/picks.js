@@ -32,7 +32,7 @@ const GENRES = [
 	[878, '科幻'], [53, '惊悚'], [10752, '战争'], [37, '西部'],
 ];
 const DECADES = [1950, 1960, 1970, 1980, 1990, 2000, 2010, 2020];
-const MODE_LABELS = { comfort: '猜你喜欢', bridge: '跨出一步', explore: '开新坑' };
+const MODE_LABELS = { comfort: '猜你喜欢', bridge: '跨出一步', explore: '开新坑', backfill: '补个评分' };
 
 // The filters each pick was asked with, so 换一部 keeps them (pickId → filters).
 const filtersByPick = new Map();
@@ -160,12 +160,14 @@ function cardText(card, filters) {
 	const original = card.originalTitle && card.originalTitle !== card.title ? ` ${card.originalTitle}` : '';
 	const score = card.voteAverage != null ? `TMDB ${Number(card.voteAverage).toFixed(1)}${card.voteCount ? `（${card.voteCount.toLocaleString('en-US')} 票）` : ''}` : null;
 	return [
-		`## 🎲 随机推荐 · ${MODE_LABELS[card.mode] ?? card.mode}${asked.length ? `\n-# 条件：${asked.join(' · ')}` : ''}`,
+		card.mode === 'backfill'
+			? `## ✍️ 补个评分 · 你看过但没在 Trakt 评分${asked.length ? `\n-# 条件：${asked.join(' · ')}` : ''}`
+			: `## 🎲 随机推荐 · ${MODE_LABELS[card.mode] ?? card.mode}${asked.length ? `\n-# 条件：${asked.join(' · ')}` : ''}`,
 		`### [《${card.title}》](https://www.themoviedb.org/movie/${card.tmdbId})${card.year ? `（${card.year}）` : ''}${original}`,
 		meta.length ? `-# ${meta.join(' · ')}` : null,
 		`> ${card.reason}${card.ai ? ' ✨' : ''}${card.inWatchlist ? '\n> 已在你的想看列表' : ''}`,
 		card.overview ? (card.overview.length > 300 ? `${card.overview.slice(0, 300)}…` : card.overview) : null,
-		[score, card.remainingToday > 0 ? `今天还能换 ${card.remainingToday} 次` : '今天的额度用完了'].filter(Boolean).map((text) => `-# ${text}`).join('\n'),
+		[score, card.mode === 'backfill' ? '评完分这次不算额度' : null, card.remainingToday > 0 ? `今天还能换 ${card.remainingToday} 次` : '今天的额度用完了'].filter(Boolean).map((text) => `-# ${text}`).join('\n'),
 	]
 		.filter(Boolean)
 		.join('\n');
@@ -175,9 +177,14 @@ function cardText(card, filters) {
 function buttons(card, userId, chosen) {
 	const id = (action) => `pick:${action}:${card.pickId}:${userId}`;
 	const style = (action, active) => (chosen === action ? ButtonStyle.Success : active);
+	const main = card.mode === 'backfill'
+		? [new ButtonBuilder().setCustomId(id('rateprompt')).setLabel('评分').setEmoji('✍️').setStyle(style('rateprompt', ButtonStyle.Primary)).setDisabled(Boolean(chosen))]
+		: [
+			new ButtonBuilder().setCustomId(id('want')).setLabel('想看').setEmoji('👍').setStyle(style('want', ButtonStyle.Primary)).setDisabled(Boolean(chosen)),
+			new ButtonBuilder().setCustomId(id('seen')).setLabel('看过了').setEmoji('✅').setStyle(style('seen', ButtonStyle.Secondary)).setDisabled(Boolean(chosen)),
+		];
 	return new ActionRowBuilder().addComponents(
-		new ButtonBuilder().setCustomId(id('want')).setLabel('想看').setEmoji('👍').setStyle(style('want', ButtonStyle.Primary)).setDisabled(Boolean(chosen)),
-		new ButtonBuilder().setCustomId(id('seen')).setLabel('看过了').setEmoji('✅').setStyle(style('seen', ButtonStyle.Secondary)).setDisabled(Boolean(chosen)),
+		...main,
 		new ButtonBuilder().setCustomId(id('next')).setLabel('换一部').setEmoji('🔁').setStyle(ButtonStyle.Secondary).setDisabled(Boolean(chosen) || !(card.remainingToday > 0)),
 		// Anyone with a profile may ask; the answer uses the asker's own taste and is private.
 		...(aiEnabled ? [new ButtonBuilder().setCustomId(id('ask')).setLabel('AI 怎么看').setEmoji('💬').setStyle(ButtonStyle.Secondary)] : []),
@@ -220,9 +227,10 @@ async function recommend(userId, filters, show) {
 }
 
 // After a rating is written: the confirmation plus a button to change it.
-function ratedMessage(title, rating, pickId, userId, changed) {
+function ratedMessage(title, rating, pickId, userId, changed, result = null) {
+	const refund = result?.refunded ? `这次不算额度，今天还能推荐 ${result.remainingToday} 次。` : '';
 	return {
-		content: `✅ ${changed ? '改好了' : '记下了'}：《${title}》${rating} 分，已标记看过并写进 Trakt。`,
+		content: `✅ ${changed ? '改好了' : '记下了'}：《${title}》${rating} 分，${result?.action === 'rated' ? '已写进 Trakt。' : '已标记看过并写进 Trakt。'}${refund}`,
 		components: [new ActionRowBuilder().addComponents(new ButtonBuilder().setCustomId(`pick:rerate:${pickId}:${userId}`).setLabel('修改评分').setEmoji('✏️').setStyle(ButtonStyle.Secondary))],
 	};
 }
@@ -276,6 +284,10 @@ async function handlePickInteraction(interaction) {
 		}
 		return;
 	}
+	if (action === 'rateprompt') {
+		await interaction.reply({ content: `给《${card?.title ?? '这部'}》打个分：`, components: [ratingMenu(pickId, ownerId)] });
+		return;
+	}
 	if (action === 'rerate') {
 		// Back to the menu; the next pick:rate overwrites the rating on Trakt.
 		await interaction.update({ content: `换个分数给《${card?.title ?? '这部'}》：`, components: [ratingMenu(pickId, ownerId)] });
@@ -285,8 +297,9 @@ async function handlePickInteraction(interaction) {
 		const rating = Number(interaction.values?.[0]);
 		const changed = /^✅/.test(interaction.message?.content ?? '') || /换个分数/.test(interaction.message?.content ?? '');
 		await interaction.deferUpdate();
+		let result;
 		try {
-			await markWatched(ownerId, pickId, rating);
+			result = await markWatched(ownerId, pickId, rating);
 		}
 		catch (error) {
 			const text = explain(error);
@@ -294,8 +307,8 @@ async function handlePickInteraction(interaction) {
 			await interaction.followUp({ content: text, flags: MessageFlags.Ephemeral });
 			return;
 		}
-		console.info(`[movie] Rated for ${ownerId}: ${card?.title ?? pickId} → ${rating}${changed ? ' (changed)' : ''}`);
-		await interaction.editReply(ratedMessage(card?.title ?? '这部', rating, pickId, ownerId, changed));
+		console.info(`[movie] Rated for ${ownerId}: ${card?.title ?? pickId} → ${rating}${changed ? ' (changed)' : ''}${result?.refunded ? ' (refunded)' : ''}`);
+		await interaction.editReply(ratedMessage(card?.title ?? '这部', rating, pickId, ownerId, changed, result));
 		return;
 	}
 	await interaction.deferUpdate();
