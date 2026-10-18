@@ -47,7 +47,7 @@ const LIMIT_TEASES = [
 	'额度用完了。推荐不是无限刷的，去追番 👀',
 ];
 
-// The day's picks left, then the bonus picks (100 to start, never reset; the owner adds more).
+// The day's picks left, then the bonus picks (100 to start, never reset; the owner adds more with /owner bonus).
 function quotaLine(card) {
 	const daily = card.remainingToday ?? 0;
 	const bonus = card.bonusLeft ?? 0;
@@ -381,9 +381,4 @@ async function handleAnimePickInteraction(interaction) {
 	}
 }
 
-// The owner's /anime-bonus: add (or take back) someone's bonus picks.
-function grantBonus(userId, amount) {
-	return movieRequest('POST', `/anime-picks/${part(userId)}/bonus`, { amount });
-}
-
-module.exports = { GENRES, DECADES, FORMATS, LENGTHS, grantBonus, recommend, rememberMessage, explain, handleAnimePickInteraction };
+module.exports = { GENRES, DECADES, FORMATS, LENGTHS, recommend, rememberMessage, explain, handleAnimePickInteraction };
