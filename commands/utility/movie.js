@@ -120,6 +120,33 @@ async function check(interaction) {
 	}
 }
 
+// /movie profile [user]: a link to someone's statistics page on the website. Posted in the channel
+// so Discord unfolds the page's preview card (name, style title, radar); anything that isn't a
+// link is only shown to the person who asked.
+async function profile(interaction) {
+	const target = interaction.options.getUser('user') ?? interaction.user;
+	const self = target.id === interaction.user.id;
+	const name = target.globalName || target.username;
+	let link;
+	try {
+		link = await store.profileLink(target.id);
+	}
+	catch (error) {
+		console.warn('[movie profile] lookup failed:', error.message);
+		await interaction.reply({ content: '暂时连不上观影服务，稍后再试。', flags: MessageFlags.Ephemeral });
+		return;
+	}
+	if (!link?.siteUserId) {
+		const content = self
+			? `你还没有网站上的观影档案。先到 ${SETUP_URL} 用 Discord 登录并连接 Trakt，就会有自己的观影统计页。`
+			: `${name} 还没有网站上的观影档案。`;
+		await interaction.reply({ content, flags: MessageFlags.Ephemeral });
+		return;
+	}
+	const url = `${SITE_URL}/moviehub/u/${encodeURIComponent(link.siteUserId)}`;
+	await interaction.reply({ content: `**${name}** 的观影统计\n${url}`, allowedMentions: { parse: [] } });
+}
+
 module.exports = {
 	// Global and user-installable: subscribe from anywhere; recommendations come by DM.
 	global: true,
@@ -139,6 +166,12 @@ module.exports = {
 				.addIntegerOption((option) => option.setName('decade').setDescription('只挑这个年代的').addChoices(...picks.DECADES.map((decade) => ({ name: `${decade} 年代`, value: decade }))))
 				.addIntegerOption((option) => option.setName('max_runtime').setDescription('最长片长（分钟）').setMinValue(30).setMaxValue(600)),
 		)
+		.addSubcommand((sub) =>
+			sub
+				.setName('profile')
+				.setDescription('贴出某人的网站观影统计（风格雷达、评分、共同看过）')
+				.addUserOption((option) => option.setName('user').setDescription('要看谁的，不填就是自己')),
+		)
 		.setIntegrationTypes(ApplicationIntegrationType.GuildInstall, ApplicationIntegrationType.UserInstall)
 		.setContexts(InteractionContextType.Guild, InteractionContextType.BotDM, InteractionContextType.PrivateChannel),
 
@@ -148,6 +181,10 @@ module.exports = {
 			return;
 		}
 		const subcommand = interaction.options.getSubcommand();
+		if (subcommand === 'profile') {
+			await profile(interaction);
+			return;
+		}
 		if (subcommand === 'recommend') {
 			// Public on purpose: the card and its buttons stay in the channel for everyone to see.
 			await interaction.deferReply();

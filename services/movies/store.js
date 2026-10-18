@@ -23,6 +23,10 @@ function isNoProfile(error) {
 function unsubscribe(userId) {
 	return movieRequest('DELETE', `/subscribers/${part(userId)}`);
 }
+// Whose website page a Discord user's movie profile is (siteUserId), or null without a profile.
+function profileLink(userId) {
+	return movieRequest('GET', `/profiles/${part(userId)}`);
+}
 function userMovies(userId) {
 	return movieRequest('GET', `/records/${part(userId)}`);
 }
@@ -56,4 +60,4 @@ async function fetchPublicRatings(imdbIds) {
 	return result;
 }
 const withSubscription = (subscription, fn) => subscriptionContext.run(subscription, fn);
-module.exports = { withSubscription, getSubscriber, listSubscribers, subscribe, isNoProfile, unsubscribe, userMovies, updateMovie, getTaste, readCache, writeCache, fetchPublicRatings };
+module.exports = { withSubscription, getSubscriber, listSubscribers, subscribe, isNoProfile, unsubscribe, profileLink, userMovies, updateMovie, getTaste, readCache, writeCache, fetchPublicRatings };
