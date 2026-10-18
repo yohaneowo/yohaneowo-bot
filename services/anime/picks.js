@@ -238,13 +238,15 @@ function ratedMessage(title, rating, pickId, userId, changed, result = null) {
 		? `这次不算额度，今天还能推荐 ${result.remainingToday} 次。`
 		: own && !changed && result?.remainingToday != null ? `今天还能推荐 ${result.remainingToday} 次。` : '';
 	const lead = !own ? `你之前给过《${title}》${rating} 分，` : `${changed ? '改好了' : '记下了'}：《${title}》${rating} 分，`;
+	// Trakt keeps the show's rating apart from its seasons'; admin sets it to their average.
+	const show = result?.showRating != null ? `整部作品的评分也更新为 ${result.showRating} 分（各季平均）。` : '';
 	const actions = own
 		? [
 			new ButtonBuilder().setCustomId(`apick:rerate:${pickId}:${userId}`).setLabel('修改评分').setEmoji('✏️').setStyle(ButtonStyle.Secondary),
 			new ButtonBuilder().setCustomId(`apick:unrate:${pickId}:${userId}`).setLabel('删除评分').setEmoji('🗑️').setStyle(ButtonStyle.Danger),
 		]
 		: [];
-	return { content: `✅ ${lead}${written}${quota}`, components: actions.length ? [new ActionRowBuilder().addComponents(...actions)] : [] };
+	return { content: `✅ ${lead}${written}${show}${quota}`, components: actions.length ? [new ActionRowBuilder().addComponents(...actions)] : [] };
 }
 
 function ratingMenu(pickId, userId) {
@@ -311,7 +313,7 @@ async function handleAnimePickInteraction(interaction) {
 		}
 		console.info(`[anime] Unrated for ${ownerId}: ${result.title ?? pickId}, ${result.remainingToday} left today`);
 		await interaction.editReply({
-			content: `🗑️ 已删除《${result.title ?? '这部'}》的评分和这次的观看记录，退还的额度也收回了（今天还能推荐 ${result.remainingToday} 次）。`,
+			content: `🗑️ 已删除《${result.title ?? '这部'}》的评分和这次的观看记录，退还的额度也收回了（今天还能推荐 ${result.remainingToday} 次）。${result.showRating != null ? `整部作品的评分现在是 ${result.showRating} 分。` : ''}`,
 			components: [],
 		});
 		if (card) await interaction.message?.channel?.messages?.fetch?.(card.messageId).then((m) => m.edit(cardMessage(card, filters, ownerId))).catch(ignore);
