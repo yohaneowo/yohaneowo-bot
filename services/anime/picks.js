@@ -43,9 +43,20 @@ const filtersByPick = new Map();
 const cardsByPick = new Map();
 
 const LIMIT_TEASES = [
-	'今天的三部都用完了，先挑一部追吧，明天再来 📺',
+	'今天的次数和奖励次数都用完了，先挑一部追吧，明天再来 📺',
 	'额度用完了。推荐不是无限刷的，去追番 👀',
 ];
+
+// The day's picks left, then the bonus picks (100 to start, never reset; the owner adds more).
+function quotaLine(card) {
+	const daily = card.remainingToday ?? 0;
+	const bonus = card.bonusLeft ?? 0;
+	if (daily > 0) return `今天还能换 ${daily} 次${bonus > 0 ? `，另有 ${bonus} 次奖励次数` : ''}`;
+	if (bonus > 0) return `今天的次数用完了，接下来用奖励次数（还有 ${bonus} 次）`;
+	return '今天的额度用完了';
+}
+
+const canPickAgain = (card) => (card.remainingToday ?? 0) > 0 || (card.bonusLeft ?? 0) > 0;
 const UNRATED_TEASES = [
 	(title) => `看完《${title}》却没评分？那我怎么知道你喜不喜欢 🥲 现在补一个：`,
 	(title) => `《${title}》追完不打分，下次推错可别怪我 😤 选个分数：`,
@@ -92,7 +103,7 @@ async function recoverPick(userId, since) {
 	const listed = await listPicks(userId).catch(() => null);
 	const fresh = (listed?.picks ?? []).find((p) => !p.action && p.card && p.shownAt && Date.parse(`${p.shownAt}Z`) >= since - 60000);
 	if (!fresh) return null;
-	return { ...fresh.card, pickId: fresh.pickId, mode: fresh.mode, modeLabel: fresh.modeLabel, reason: fresh.reason, remainingToday: listed.remainingToday };
+	return { ...fresh.card, pickId: fresh.pickId, mode: fresh.mode, modeLabel: fresh.modeLabel, reason: fresh.reason, remainingToday: listed.remainingToday, bonusLeft: listed.bonus };
 }
 
 function isTimeout(error) {
@@ -178,7 +189,8 @@ function cardText(card, filters) {
 			scores || null,
 			card.trakt ? null : 'Trakt 上找不到对应的季，这部只能看链接',
 			card.mode === 'airing' && !filters.airing ? `不想在推荐里看到新番？到网站设定关掉：${SETTINGS_URL}` : null,
-			card.remainingToday > 0 ? `今天还能换 ${card.remainingToday} 次` : '今天的额度用完了',
+			card.usedBonus ? '这次用了 1 次奖励次数' : null,
+			quotaLine(card),
 		].filter(Boolean).map((text) => `-# ${text}`).join('\n'),
 	]
 		.filter(Boolean)
@@ -193,7 +205,7 @@ function buttons(card, userId, chosen) {
 	const row = new ActionRowBuilder();
 	if (card.trakt) row.addComponents(new ButtonBuilder().setCustomId(id('want')).setLabel('想看').setEmoji('👍').setStyle(style('want', ButtonStyle.Primary)).setDisabled(Boolean(chosen)));
 	if (card.trakt?.watchable) row.addComponents(new ButtonBuilder().setCustomId(id('seen')).setLabel('看过了').setEmoji('✅').setStyle(style('seen', ButtonStyle.Secondary)).setDisabled(Boolean(chosen)));
-	row.addComponents(new ButtonBuilder().setCustomId(id('next')).setLabel('换一部').setEmoji('🔁').setStyle(ButtonStyle.Secondary).setDisabled(Boolean(chosen) || !(card.remainingToday > 0)));
+	row.addComponents(new ButtonBuilder().setCustomId(id('next')).setLabel('换一部').setEmoji('🔁').setStyle(ButtonStyle.Secondary).setDisabled(Boolean(chosen) || !canPickAgain(card)));
 	if (card.links?.bangumi) row.addComponents(new ButtonBuilder().setLabel('Bangumi').setStyle(ButtonStyle.Link).setURL(card.links.bangumi));
 	row.addComponents(new ButtonBuilder().setLabel(card.trakt ? 'Trakt' : 'AniList').setEmoji('🔗').setStyle(ButtonStyle.Link).setURL(card.trakt?.url ?? card.links.anilist));
 	return row;
@@ -235,8 +247,8 @@ function ratedMessage(title, rating, pickId, userId, changed, result = null) {
 	const own = result?.own !== false;
 	const written = own ? '已标记看过并写进 Trakt。' : '已标记看过。';
 	const quota = result?.refunded
-		? `这次不算额度，今天还能推荐 ${result.remainingToday} 次。`
-		: own && !changed && result?.remainingToday != null ? `今天还能推荐 ${result.remainingToday} 次。` : '';
+		? `这次不算额度，${quotaLine(result)}。`
+		: own && !changed && result?.remainingToday != null ? `${quotaLine(result)}。` : '';
 	const lead = !own ? `你之前给过《${title}》${rating} 分，` : `${changed ? '改好了' : '记下了'}：《${title}》${rating} 分，`;
 	// Trakt keeps the show's rating apart from its seasons'; admin sets it to their average.
 	const show = result?.showRating != null ? `整部作品的评分也更新为 ${result.showRating} 分（各季平均）。` : '';
@@ -313,7 +325,7 @@ async function handleAnimePickInteraction(interaction) {
 		}
 		console.info(`[anime] Unrated for ${ownerId}: ${result.title ?? pickId}, ${result.remainingToday} left today`);
 		await interaction.editReply({
-			content: `🗑️ 已删除《${result.title ?? '这部'}》的评分和这次的观看记录，退还的额度也收回了（今天还能推荐 ${result.remainingToday} 次）。${result.showRating != null ? `整部作品的评分现在是 ${result.showRating} 分。` : ''}`,
+			content: `🗑️ 已删除《${result.title ?? '这部'}》的评分和这次的观看记录，退还的额度也收回了（${quotaLine(result)}）。${result.showRating != null ? `整部作品的评分现在是 ${result.showRating} 分。` : ''}`,
 			components: [],
 		});
 		if (card) await interaction.message?.channel?.messages?.fetch?.(card.messageId).then((m) => m.edit(cardMessage(card, filters, ownerId))).catch(ignore);
@@ -369,4 +381,9 @@ async function handleAnimePickInteraction(interaction) {
 	}
 }
 
-module.exports = { GENRES, DECADES, FORMATS, LENGTHS, recommend, rememberMessage, explain, handleAnimePickInteraction };
+// The owner's /anime-bonus: add (or take back) someone's bonus picks.
+function grantBonus(userId, amount) {
+	return movieRequest('POST', `/anime-picks/${part(userId)}/bonus`, { amount });
+}
+
+module.exports = { GENRES, DECADES, FORMATS, LENGTHS, grantBonus, recommend, rememberMessage, explain, handleAnimePickInteraction };

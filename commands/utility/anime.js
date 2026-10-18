@@ -42,7 +42,7 @@ module.exports = {
 		.addSubcommand((sub) =>
 			sub
 				.setName('recommend')
-				.setDescription('随机推荐一部你没看过的动漫（每天 3 部，想看 / 看过了会写进 Trakt）')
+				.setDescription('随机推荐一部你没看过的动漫（每天 5 次加奖励次数，想看 / 看过了会写进 Trakt）')
 				.addStringOption((option) => option.setName('genre').setDescription('只在这个类型里挑').addChoices(...picks.GENRES.map(([value, name]) => ({ name, value }))))
 				.addIntegerOption((option) => option.setName('decade').setDescription('只挑这个年代的').addChoices(...picks.DECADES.map((decade) => ({ name: `${decade} 年代`, value: decade }))))
 				.addStringOption((option) => option.setName('format').setDescription('电视版、剧场版或网络版').addChoices(...picks.FORMATS.map(([value, name]) => ({ name, value }))))
