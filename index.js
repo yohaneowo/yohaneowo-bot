@@ -9,6 +9,7 @@ const { setupVoiceHubs } = require('./services/voiceHubs');
 const { setupVoiceLog } = require('./services/voiceLog');
 const { moviesEnabled, runDaily: runDailyMovies, handleFeedbackButton } = require('./services/movies/recommender');
 const { handlePickInteraction } = require('./services/movies/picks');
+const { handleAnimePickInteraction } = require('./services/anime/picks');
 const {
 	INITIAL_STATUS,
 	isMediaQueueFull,
@@ -292,6 +293,10 @@ client.on(Events.InteractionCreate, async (interaction) => {
 	}
 	if ((interaction.isButton() || interaction.isStringSelectMenu()) && interaction.customId.startsWith('pick:')) {
 		await handlePickInteraction(interaction).catch((error) => console.warn('[movie] Pick interaction failed:', error.message));
+		return;
+	}
+	if ((interaction.isButton() || interaction.isStringSelectMenu()) && interaction.customId.startsWith('apick:')) {
+		await handleAnimePickInteraction(interaction).catch((error) => console.warn('[anime] Pick interaction failed:', error.message));
 		return;
 	}
 	if (!interaction.isChatInputCommand() && !interaction.isMessageContextMenuCommand()) return;
