@@ -38,9 +38,20 @@ const MODE_LABELS = { comfort: '猜你喜欢', bridge: '跨出一步', explore: 
 const filtersByPick = new Map();
 
 const LIMIT_TEASES = [
-	'今天的三部都用完了，先挑一部看吧，明天再来 🎬',
+	'今天的次数和奖励次数都用完了，先挑一部看吧，明天再来 🎬',
 	'额度用完了。推荐不是无限刷的，去看片 👀',
 ];
+
+// The day's picks left, then the bonus picks (100 to start, never reset; the owner adds more with /owner bonus).
+function quotaLine(card) {
+	const daily = card.remainingToday ?? 0;
+	const bonus = card.bonusLeft ?? 0;
+	if (daily > 0) return `今天还能换 ${daily} 次${bonus > 0 ? `，另有 ${bonus} 次奖励次数` : ''}`;
+	if (bonus > 0) return `今天的次数用完了，接下来用奖励次数（还有 ${bonus} 次）`;
+	return '今天的额度用完了';
+}
+
+const canPickAgain = (card) => (card.remainingToday ?? 0) > 0 || (card.bonusLeft ?? 0) > 0;
 const UNRATED_TEASES = [
 	(title) => `看过了《${title}》却没评分？那我怎么知道你喜不喜欢 🥲 现在补一个：`,
 	(title) => `《${title}》看完不打分，下次推错可别怪我 😤 选个分数：`,
@@ -94,7 +105,7 @@ async function recoverPick(userId, since) {
 	const listed = await listPicks(userId).catch(() => null);
 	const fresh = (listed?.picks ?? []).find((p) => !p.action && p.card && p.shownAt && Date.parse(`${p.shownAt}Z`) >= since - 60000);
 	if (!fresh) return null;
-	return { ...fresh.card, pickId: fresh.pickId, mode: fresh.mode, reason: fresh.reason, remainingToday: listed.remainingToday };
+	return { ...fresh.card, pickId: fresh.pickId, mode: fresh.mode, reason: fresh.reason, remainingToday: listed.remainingToday, bonusLeft: listed.bonus };
 }
 
 function isTimeout(error) {
@@ -172,7 +183,7 @@ function cardText(card, filters) {
 		meta.length ? `-# ${meta.join(' · ')}` : null,
 		`> ${card.reason}${card.ai ? ' ✨' : ''}${card.inWatchlist ? '\n> 已在你的想看列表' : ''}`,
 		card.overview ? (card.overview.length > 300 ? `${card.overview.slice(0, 300)}…` : card.overview) : null,
-		[score, card.mode === 'backfill' ? '评完分这次不算额度' : null, card.remainingToday > 0 ? `今天还能换 ${card.remainingToday} 次` : '今天的额度用完了'].filter(Boolean).map((text) => `-# ${text}`).join('\n'),
+		[score, card.mode === 'backfill' ? '评完分这次不算额度' : null, card.usedBonus ? '这次用了 1 次奖励次数' : null, quotaLine(card)].filter(Boolean).map((text) => `-# ${text}`).join('\n'),
 	]
 		.filter(Boolean)
 		.join('\n');
@@ -190,7 +201,7 @@ function buttons(card, userId, chosen) {
 		];
 	return new ActionRowBuilder().addComponents(
 		...main,
-		new ButtonBuilder().setCustomId(id('next')).setLabel('换一部').setEmoji('🔁').setStyle(ButtonStyle.Secondary).setDisabled(Boolean(chosen) || !(card.remainingToday > 0)),
+		new ButtonBuilder().setCustomId(id('next')).setLabel('换一部').setEmoji('🔁').setStyle(ButtonStyle.Secondary).setDisabled(Boolean(chosen) || !canPickAgain(card)),
 		// Anyone with a profile may ask; the answer uses the asker's own taste and is private.
 		...(aiEnabled ? [new ButtonBuilder().setCustomId(id('ask')).setLabel('AI 怎么看').setEmoji('💬').setStyle(ButtonStyle.Secondary)] : []),
 		new ButtonBuilder().setLabel('Trakt').setEmoji('🔗').setStyle(ButtonStyle.Link).setURL(card.traktUrl ?? `https://trakt.tv/search?query=${encodeURIComponent(card.originalTitle ?? card.title)}`),
@@ -245,8 +256,8 @@ function ratedMessage(title, rating, pickId, userId, changed, result = null) {
 	const own = result?.own !== false;
 	const written = result?.action === 'rated' ? '已写进 Trakt。' : own ? '已标记看过并写进 Trakt。' : '已标记看过。';
 	const quota = result?.refunded
-		? `这次不算额度，今天还能推荐 ${result.remainingToday} 次。`
-		: own && !changed && result?.remainingToday != null ? `今天还能推荐 ${result.remainingToday} 次。` : '';
+		? `这次不算额度，${quotaLine(result)}。`
+		: own && !changed && result?.remainingToday != null ? `${quotaLine(result)}。` : '';
 	const lead = !own ? `你之前给过《${title}》${rating} 分，` : `${changed ? '改好了' : '记下了'}：《${title}》${rating} 分，`;
 	const actions = own
 		? [
@@ -342,7 +353,7 @@ async function handlePickInteraction(interaction) {
 		}
 		console.info(`[movie] Unrated for ${ownerId}: ${result.title ?? pickId}, ${result.remainingToday} left today`);
 		await interaction.editReply({
-			content: `🗑️ 已删除《${result.title ?? '这部'}》的评分和这次的观看记录，退还的额度也收回了（今天还能推荐 ${result.remainingToday} 次）。`,
+			content: `🗑️ 已删除《${result.title ?? '这部'}》的评分和这次的观看记录，退还的额度也收回了（${quotaLine(result)}）。`,
 			components: [],
 		});
 		if (card) await interaction.message?.channel?.messages?.fetch?.(card.messageId).then((m) => m.edit(cardMessage(card, filters, ownerId))).catch(ignore);

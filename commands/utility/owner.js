@@ -8,7 +8,7 @@ const {
 const { movieRequest } = require('../../services/adminApi');
 
 // Features with bonus picks (admin's bonus.FEATURES); add one here when a feature gets a bonus.
-const FEATURES = [['anime', '动漫推荐']];
+const FEATURES = [['movie', '电影推荐'], ['anime', '动漫推荐']];
 const featureName = (feature) => FEATURES.find(([value]) => value === feature)?.[1] ?? feature;
 
 // The bot's owner (the application's owner, or its team's members): only they may use /owner.

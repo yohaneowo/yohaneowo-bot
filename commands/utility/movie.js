@@ -161,7 +161,7 @@ module.exports = {
 		.addSubcommand((sub) =>
 			sub
 				.setName('recommend')
-				.setDescription('随机推荐一部你没看过的电影（每天 3 部，想看 / 看过了会写进 Trakt）')
+				.setDescription('随机推荐一部你没看过的电影（每天 3 次加奖励次数，想看 / 看过了会写进 Trakt）')
 				.addIntegerOption((option) => option.setName('genre').setDescription('只在这个类型里挑').addChoices(...picks.GENRES.map(([value, name]) => ({ name, value }))))
 				.addIntegerOption((option) => option.setName('decade').setDescription('只挑这个年代的').addChoices(...picks.DECADES.map((decade) => ({ name: `${decade} 年代`, value: decade }))))
 				.addIntegerOption((option) => option.setName('max_runtime').setDescription('最长片长（分钟）').setMinValue(30).setMaxValue(600)),
