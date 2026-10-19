@@ -10,6 +10,7 @@ const { setupVoiceLog } = require('./services/voiceLog');
 const { moviesEnabled, runDaily: runDailyMovies, handleFeedbackButton } = require('./services/movies/recommender');
 const { handlePickInteraction } = require('./services/movies/picks');
 const { handleAnimePickInteraction } = require('./services/anime/picks');
+const { startDotaNotifications } = require('./services/dota/notify');
 const {
 	INITIAL_STATUS,
 	isMediaQueueFull,
@@ -146,6 +147,7 @@ client.once(Events.ClientReady, async (readyClient) => {
 		setInterval(reportPortfolioToAdmin, ADMIN_PORTFOLIO_INTERVAL_MS).unref();
 		reportDependenciesToAdmin();
 		setInterval(reportDependenciesToAdmin, ADMIN_DEPENDENCY_INTERVAL_MS).unref();
+		startDotaNotifications(readyClient);
 	}
 
 	const cronExpression = process.env.PORTFOLIO_CRON || '0 9 * * *';
