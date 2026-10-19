@@ -66,7 +66,8 @@ async function buildMessage(match) {
 	].filter(Boolean).join(' · ');
 	const lines = events.map((e, i) => {
 		const killer = names.get(e.by) ?? '防御塔或中立生物';
-		return `${CIRCLED[i] ?? `${i + 1}.`} \`${clock(e.t)}\` ${killer} · 掉 ${e.gold} 金 · 等 ${e.dead} 秒`;
+		// fb: this death was the match's first blood.
+		return `${CIRCLED[i] ?? `${i + 1}.`} \`${clock(e.t)}\`${e.fb ? ' **一血**' : ''} ${killer} · 掉 ${e.gold} 金 · 等 ${e.dead} 秒`;
 	});
 	const embed = new EmbedBuilder()
 		.setColor(match.won ? WIN : LOSS)
