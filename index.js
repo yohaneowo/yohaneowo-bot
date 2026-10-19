@@ -1,3 +1,7 @@
+// Node's fetch tries each of a host's addresses for only 250 ms; from the home network some hosts
+// behind Cloudflare take longer to connect (OpenDota about 280 ms), which failed every attempt.
+require('node:net').setDefaultAutoSelectFamilyAttemptTimeout(2000);
+
 // Require the necessary discord.js classes
 const fs = require('node:fs');
 const path = require('node:path');
