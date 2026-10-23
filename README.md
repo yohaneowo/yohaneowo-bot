@@ -18,7 +18,7 @@
   | Threads | 文字、图片、影片、多图贴文（最多 10 个），引用贴文会显示被引用的影片和图片 | Threads 网页自己用的 GraphQL 接口，不需要登录 |
   | X（Twitter） | 文字、图片（原图）、影片（选上限内最高画质）、多媒体贴文（最多 4 个），引用贴文会显示被引用的媒体；敏感内容以 Spoiler 发送。也接受 fxtwitter / vxtwitter / fixupx 链接 | X 嵌入推文用的 syndication 接口，不需要登录；拿不到时改用 yt-dlp |
 
-  Threads 没有 yt-dlp 解析器，bot 直接调用 Threads 网页使用的接口（做法参考 [vxThreads](https://github.com/everettsouthwick/vxThreads)）。接口需要的查询 ID 和参数会随着 Threads 更新而改变，所以 bot 会从 Threads 的网页脚本中自动读取，缓存 12 小时，查询失败时重新读取。
+  Threads 没有 yt-dlp 解析器，bot 直接调用 Threads 网页使用的接口（做法参考 [vxThreads](https://github.com/everettsouthwick/vxThreads)）。接口需要的查询 ID 和参数会随着 Threads 更新而改变，所以 bot 会从 Threads 的网页脚本中自动读取（贴文页引用的脚本，加上路由定义接口列出的脚本——2026 年 10 月起查询只在后者里），缓存 12 小时，查询失败时重新读取。
 
   需要压缩的影片，如果压缩后的视频码率会低于 700 kbps（10 MB 上限下大约 90 秒），就不发送，改为回复"影片太长，建议直接到原网站观看"。原片本来就在上限以内的影片不受影响。
 

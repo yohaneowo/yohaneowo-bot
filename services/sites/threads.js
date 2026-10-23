@@ -9,7 +9,9 @@ const { mediaLog, formatMb } = require('../mediaLog');
 //   1. /ajax/bulk-route-definitions/ turns a post path into its numeric post id;
 //   2. /api/graphql runs BarcelonaPostPageTargetQuery for the post data.
 // The query's doc id and its ~40 "provided variables" change whenever Threads ships, so they're
-// read from Threads' own JS bundles, cached, and re-read when a query fails.
+// read from Threads' own JS bundles, cached, and re-read when a query fails. Since 2026-10 the post
+// page's HTML no longer links the bundle that holds the query; the route-definitions answer (step 1)
+// lists it, so both sets of bundles are scanned, the route's first.
 const ORIGIN = 'https://www.threads.com';
 const QUERY_NAME = 'BarcelonaPostPageTargetQuery';
 const IG_APP_ID = '238260118697367';
@@ -65,20 +67,31 @@ async function resolvePostPath(url) {
 	throw new Error('Too many redirects resolving the Threads link');
 }
 
-// Reads the current doc id, provided-variable names and LSD token from a post page's bundles.
-async function discoverQueryConfig(postPath) {
-	const html = await (await request(`${ORIGIN}${postPath}`)).text();
-	const lsd = html.match(/"LSD",\[\],\{"token":"([^"]+)"/)?.[1];
-	const bundleUrls = [
+// The JS bundle URLs mentioned in a page or an API answer (JSON escapes the slashes).
+function bundleUrls(text) {
+	return [
 		...new Set(
-			(html.match(/https:\\?\/\\?\/static\.cdninstagram\.com\\?\/rsrc\.php\\?\/[^"\s]+?\.js\b[^"\s]*/g) ?? []).map(
+			(text.match(/https:\\?\/\\?\/static\.cdninstagram\.com\\?\/rsrc\.php\\?\/[^"\s]+?\.js\b[^"\s]*/g) ?? []).map(
 				(bundleUrl) => bundleUrl.replace(/\\\//g, '/'),
 			),
 		),
 	];
+}
+
+// Reads the current doc id, provided-variable names and LSD token from a post page's bundles and
+// the bundles its route definition loads.
+async function discoverQueryConfig(postPath) {
+	const html = await (await request(`${ORIGIN}${postPath}`)).text();
+	const lsd = html.match(/"LSD",\[\],\{"token":"([^"]+)"/)?.[1];
+	if (!lsd) {
+		throw new Error('Could not find the LSD token in the Threads post page');
+	}
+	const pageBundles = bundleUrls(html);
+	const routeBundles = bundleUrls(await fetchRouteDefinition(postPath, lsd)).filter((url) => !pageBundles.includes(url));
+	const urls = [...routeBundles, ...pageBundles];
 
 	let found = null;
-	const queue = [...bundleUrls];
+	const queue = [...urls];
 	await Promise.all(
 		Array.from({ length: BUNDLE_FETCH_CONCURRENCY }, async () => {
 			while (queue.length && !found) {
@@ -89,7 +102,7 @@ async function discoverQueryConfig(postPath) {
 				if (start < 0) continue;
 
 				const docId = js.match(
-					new RegExp(`__d\\("${QUERY_NAME}_threadsRelayOperation",\\[\\],\\(function\\([^)]*\\)\\{a\\.exports="(\\d+)"`),
+					new RegExp(`__d\\("${QUERY_NAME}_threadsRelayOperation",\\[\\],\\(function\\([^)]*\\)\\{\\w+\\.exports="(\\d+)"`),
 				)?.[1];
 				const providers = [...new Set(js.slice(start, js.indexOf('}}', start)).match(/__relay_internal__pv__\w+/g))];
 				if (docId) found = { docId, providers };
@@ -97,8 +110,8 @@ async function discoverQueryConfig(postPath) {
 		}),
 	);
 
-	if (!found || !lsd) {
-		throw new Error(`Could not find ${QUERY_NAME} in the Threads web bundles`);
+	if (!found) {
+		throw new Error(`Could not find ${QUERY_NAME} in the Threads web bundles (${urls.length} scanned)`);
 	}
 	return { ...found, lsd, expiresAt: Date.now() + CONFIG_TTL_MS };
 }
@@ -134,14 +147,19 @@ function apiHeaders(lsd) {
 	};
 }
 
-async function fetchPostId(postPath, lsd) {
+// The route definition of a post path: its post id, and the bundles the post page loads.
+async function fetchRouteDefinition(postPath, lsd) {
 	const response = await request(`${ORIGIN}/ajax/bulk-route-definitions/`, {
 		method: 'POST',
 		headers: apiHeaders(lsd),
 		body: formBody({ 'route_urls[0]': postPath, __a: '1', __comet_req: '29', lsd }),
 	});
 	// The body is prefixed with "for (;;);" to stop JSON hijacking.
-	const payload = JSON.parse((await response.text()).replace(/^for \(;;\);/, ''));
+	return (await response.text()).replace(/^for \(;;\);/, '');
+}
+
+async function fetchPostId(postPath, lsd) {
+	const payload = JSON.parse(await fetchRouteDefinition(postPath, lsd));
 	const route = Object.values(payload?.payload?.payloads ?? {})[0];
 	const postId = route?.result?.exports?.rootView?.props?.post_id;
 	if (!postId) {
