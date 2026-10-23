@@ -8,52 +8,57 @@ const { fetchXiaohongshuNote } = require('./sites/xiaohongshu');
 const { fetchYouTubeShort } = require('./sites/youtube');
 const { fetchThreadsPost } = require('./sites/threads');
 const { fetchXPost } = require('./sites/x');
+const { withLinkHub } = require('./sites/linkhub');
 const { createJob, jobLogger, runInJob, formatMb } = require('./mediaLog');
 
 // Sites the bot will fetch from, each with its own fetcher. Add a site by adding an entry.
 // Only listed sites are accepted so arbitrary URLs (e.g. LAN addresses) are never requested.
-// A fetcher receives (url, dir, maxBytes, onStage) and returns
+// Every fetcher is wrapped with withLinkHub(): LinkHub (LINKHUB_API_URL) parses first, the site's
+// own parser is the fallback. A fetcher receives (url, dir, maxBytes, onStage) and returns
 // { files, author, text, compressed, note? } — note is an optional line shown under the post.
 const SUPPORTED_SITES = [
 	{
 		name: 'TikTok',
 		pattern:
 			/^https?:\/\/(?:(?:(?:www|m)\.)?tiktok\.com\/(?:@[\w.-]+\/video\/\d+|t\/[\w-]+|v\/\d+)|(?:vm|vt)\.tiktok\.com\/[\w-]+)/i,
-		fetch: fetchVideo,
+		fetch: withLinkHub(fetchVideo),
 	},
 	{
 		name: 'Facebook',
 		pattern:
 			/^https?:\/\/(?:(?:(?:www|m|web|mbasic)\.)?facebook\.com\/(?:share\/(?:[prv]\/)?[\w-]+|[\w.-]+\/posts\/|groups\/[\w.-]+\/(?:posts|permalink)\/|permalink\.php\?|story\.php\?|photo(?:\.php)?\/?\?|[\w.-]+\/photos\/|reel\/\d+|watch\/?\?|[\w.-]+\/videos\/)|fb\.watch\/[\w-]+)/i,
-		fetch: fetchFacebookPost,
+		fetch: withLinkHub(fetchFacebookPost),
 	},
 	{
 		name: 'Instagram',
-		pattern: /^https?:\/\/(?:www\.)?instagram\.com\/(?:[\w.]+\/)?(?:reels?|p|tv)\/[\w-]+|^https?:\/\/(?:www\.)?instagram\.com\/share\/(?:reel\/|p\/)?[\w-]+/i,
-		fetch: fetchInstagramPost,
+		pattern:
+			/^https?:\/\/(?:www\.)?instagram\.com\/(?:[\w.]+\/)?(?:reels?|p|tv)\/[\w-]+|^https?:\/\/(?:www\.)?instagram\.com\/share\/(?:reel\/|p\/)?[\w-]+/i,
+		fetch: withLinkHub(fetchInstagramPost),
 	},
 	{
 		name: '小红书',
-		pattern: /^https?:\/\/(?:xhslink\.com\/(?:[a-z]\/)?\w+|(?:www\.)?xiaohongshu\.com\/(?:explore|discovery\/item)\/[\da-f]+)/i,
-		fetch: fetchXiaohongshuNote,
+		pattern:
+			/^https?:\/\/(?:xhslink\.com\/(?:[a-z]\/)?\w+|(?:www\.)?xiaohongshu\.com\/(?:explore|discovery\/item)\/[\da-f]+)/i,
+		fetch: withLinkHub(fetchXiaohongshuNote),
 	},
 	{
 		name: 'YouTube',
 		// Shorts only; regular videos are too long to post.
 		pattern: /^https?:\/\/(?:(?:www|m)\.)?youtube\.com\/shorts\/[\w-]{11}/i,
-		fetch: fetchYouTubeShort,
+		fetch: withLinkHub(fetchYouTubeShort),
 	},
 	{
 		name: 'Threads',
-		pattern: /^https?:\/\/(?:www\.)?threads\.(?:com|net)\/(?:@[\w.]+\/post\/[\w-]+|share\/[\w-]+)/i,
-		fetch: fetchThreadsPost,
+		pattern:
+			/^https?:\/\/(?:www\.)?threads\.(?:com|net)\/(?:@[\w.]+\/post\/[\w-]+|share\/[\w-]+)/i,
+		fetch: withLinkHub(fetchThreadsPost),
 	},
 	{
 		name: 'X',
 		// Also the fxtwitter / vxtwitter / fixupx mirrors people share for better embeds.
 		pattern:
 			/^https?:\/\/(?:(?:www|mobile)\.)?(?:x|twitter|fxtwitter|vxtwitter|fixupx|fixvx)\.com\/(?:\w{1,15}|i(?:\/web)?)\/status(?:es)?\/\d+/i,
-		fetch: fetchXPost,
+		fetch: withLinkHub(fetchXPost),
 	},
 ];
 
@@ -95,7 +100,9 @@ async function downloadMedia(url, maxBytes, onStage) {
 	try {
 		log.info(`start ${url} (upload limit ${formatMb(maxBytes)})`);
 		const result = await runInJob(job, () => site.fetch(url, dir, maxBytes, onStage));
-		const sizes = await Promise.all(result.files.map((file) => fs.stat(file.path).then((stat) => stat.size)));
+		const sizes = await Promise.all(
+			result.files.map((file) => fs.stat(file.path).then((stat) => stat.size)),
+		);
 		log.info(
 			`parsed: ${result.files.length} file(s), ${formatMb(sizes.reduce((a, b) => a + b, 0))}` +
 				`${result.compressed ? ', compressed' : ''}${result.note ? `, note "${result.note}"` : ''}`,

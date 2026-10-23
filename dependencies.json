@@ -10,6 +10,13 @@
 	},
 	"external": [
 		{
+			"name": "LinkHub",
+			"kind": "none",
+			"source": "",
+			"usage": "链接解析聚合网关（自家项目，私有 repo yohaneowo/linkhub，所以不查上游）；bot 先问它，失败再退回本地解析",
+			"critical": true
+		},
+		{
 			"name": "XHS-Downloader",
 			"kind": "github",
 			"source": "JoeanAmier/XHS-Downloader",
