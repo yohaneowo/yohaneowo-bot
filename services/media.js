@@ -48,6 +48,13 @@ const SUPPORTED_SITES = [
 		fetch: withLinkHub(fetchYouTubeShort),
 	},
 	{
+		name: 'B站',
+		// Videos (BV / av ids) and the b23.tv / bili2233.cn short links the app shares.
+		pattern:
+			/^https?:\/\/(?:(?:(?:www|m)\.)?bilibili\.com\/video\/(?:BV\w{10}|av\d+)|(?:b23\.tv|bili2233\.cn)\/[\w-]+)/i,
+		fetch: withLinkHub(fetchVideo),
+	},
+	{
 		name: 'Threads',
 		pattern:
 			/^https?:\/\/(?:www\.)?threads\.(?:com|net)\/(?:@[\w.]+\/post\/[\w-]+|share\/[\w-]+)/i,

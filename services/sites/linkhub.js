@@ -17,6 +17,8 @@ const API_KEY = process.env.LINKHUB_API_KEY ?? '';
 const PARSE_TIMEOUT_MS = 60 * 1000;
 const DOWNLOAD_TIMEOUT_MS = 3 * 60 * 1000;
 const MAX_FILES = 10;
+// Platforms whose post text is a video description rather than the post itself.
+const VIDEO_SITES = new Set(['youtube', 'bilibili']);
 
 function isConfigured() {
 	return Boolean(API_URL);
@@ -110,7 +112,7 @@ async function fetchViaLinkHub(url, dir, maxBytes, onStage) {
 	);
 
 	// Video sites carry the description in text; the bot only posts the title there.
-	const text = meta.platform === 'youtube' ? post.title || '' : post.text || post.title || '';
+	const text = VIDEO_SITES.has(meta.platform) ? post.title || '' : post.text || post.title || '';
 	const result = { files: [], author: formatAuthor(post.author), text, compressed: false };
 	// Discord blurs SPOILER_ attachments, matching X's sensitive-media warning.
 	const filePrefix = raw?.possibly_sensitive ? 'SPOILER_' : '';

@@ -15,6 +15,7 @@
   | Instagram | 公开的 reel 和影片贴文下载影片；受限内容只显示封面、作者和内文 | 先用 yt-dlp，失败时改用链接预览资料 |
   | 小红书 | 影片笔记（720p，超过上限就压缩）；图文笔记回复"暂未开放" | [XHS-Downloader](https://github.com/JoeanAmier/XHS-Downloader) 的 API |
   | YouTube | 只支持 Shorts（`youtube.com/shorts/…`），影像和声音分开下载再合并，最高 1080p | yt-dlp（用 Node 作为 JS 执行环境） |
+  | B站 | 影片（`bilibili.com/video/…` 与 `b23.tv` 短链；分 P 影片按链接的 `?p=`），超过上限就压缩 | LinkHub（Douyin_TikTok_Download_API v5，走 B 站的 WBI 新接口）；LinkHub 失败时改用 yt-dlp |
   | Threads | 文字、图片、影片、多图贴文（最多 10 个），引用贴文会显示被引用的影片和图片 | Threads 网页自己用的 GraphQL 接口，不需要登录 |
   | X（Twitter） | 文字、图片（原图）、影片（选上限内最高画质）、多媒体贴文（最多 4 个），引用贴文会显示被引用的媒体；敏感内容以 Spoiler 发送。也接受 fxtwitter / vxtwitter / fixupx 链接 | X 嵌入推文用的 syndication 接口，不需要登录；拿不到时改用 yt-dlp |
 
