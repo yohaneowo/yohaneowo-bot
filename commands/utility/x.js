@@ -4,7 +4,7 @@ const {
 	InteractionContextType,
 	MessageFlags,
 } = require('discord.js');
-const { SUPPORTED_SITES, findSupportedSite } = require('../../services/media');
+const { SUPPORTED_SITES, extractMediaUrls } = require('../../services/media');
 const { postMediaForInteraction } = require('../../services/mediaPost');
 
 module.exports = {
@@ -24,8 +24,9 @@ module.exports = {
 		),
 
 	async execute(interaction) {
-		const url = interaction.options.getString('url').trim();
-		if (!findSupportedSite(url)) {
+		// Apps share text around the link ("【title-哔哩哔哩】 https://b23.tv/..."), so pick the link out.
+		const [url] = extractMediaUrls(interaction.options.getString('url'));
+		if (!url) {
 			await interaction.reply({
 				content: `不支持这个链接。目前支持：${SUPPORTED_SITES.map((site) => site.name).join('、')}`,
 				flags: MessageFlags.Ephemeral,
