@@ -14,6 +14,17 @@
 - 密钥在 Doppler（项目 `yohaneowo-bot`：`dev` = 本机跑测试 bot 用，`stg` = Coolify 上的测试 bot，`prd` = 稳定版；`dev` 和 `stg` 是同一个 Discord 测试 bot 的 token，不要两边同时跑），不再用 `.env` 文件；npm 脚本都包在 `doppler run` 里。不要印出值（`doppler secrets` 会印出，用 `--only-names`）。要确认某个变量有没有设，只看「有没有值」。新电脑先 `doppler login`，再在本目录 `doppler setup`。Git Bash 里执行 `doppler` 要加 `env -u PWD`（它会读 Unix 格式的 `PWD`，找不到登录状态）。`config.json` 只有 clientId / guildId。
 - `data/`（动态语音、电影推荐、向量缓存）是 gitignore 的执行资料；Docker 里由 `bot-data` volume 保存。
 
+## MindHub vault（开发纪录同步）
+
+站长的第二大脑在 `../mindhub-vault`（私有 repo，Obsidian + obsidian-second-brain），那边的对话负责整理 `wiki/`。开发这边只往它的 `raw/` 送资料、需要时读它，**不写它的笔记**：
+
+- **上线后同步**：合并进 `main` 上线后，或用户说「同步到 vault」时：
+  1. 跑 `python ../mindhub-vault/tools/dev-export.py`（增量汇出各项目的对话、文档、开发计划、提交纪录、Claude 记忆档到 `raw/`，旧日期的对话不动，最后扫密钥；`--dry-run` 先看会写哪些）。
+  2. 在 `../mindhub-vault/raw/inbox/` 写一份 `YYYY-MM-DD-HHmm-<项目>-开发小结.md`（frontmatter：`source: <项目> 开发对话`、`date`、`kind: 开发小结`）：上线了什么、做了哪些决定和理由、踩到的坑、冒出来的新点子、用户嫌弃或纠正过的做法。只写事实，不写密钥。
+  3. 跟用户说一声，由 vault 那边的对话「整理 inbox」。
+- **规划前可以读**：新功能、重做、改架构之前，先看 `../mindhub-vault/index.md` 和相关的 `wiki/projects/`、`wiki/decisions/` 笔记（过去的决定、被否决的做法、用户的偏好）。只读。
+- **不要**：改 `wiki/`、`index.md`、`_CLAUDE.md` 或任何既有笔记；改 `raw/` 里已有的旧档（只能由 `dev-export.py` 更新）；在 vault 里 `git commit` / `pull` / `push`（Obsidian Git 每 10 分钟自动同步，抢着操作会撞上它的提交）。
+
 ## 常用指令
 
 | 指令 | 用途 |
