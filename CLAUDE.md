@@ -7,6 +7,7 @@
 ## 工作约定
 
 - 用中文回复。代码注释用英文，风格跟周围一致。
+- 这是**原始码公开的 repo**（PolyForm Noncommercial 1.0.0：非商业免费，商业用途需另行授权，见 README 的「授权」一节；不要称它「开源」）：文档、注释、commit 讯息不写个人资讯或金钥。复制第三方程式码或加入素材前，先确认它的授权允许商业版一起使用。
 - 代码风格以 ESLint 为准（tab 缩进、`brace-style: stroustrup`），改完跑 `npx eslint .`。Prettier 跟 ESLint 冲突时听 ESLint。
 - 用户用 SourceTree 管 git：只有被要求时才 commit / push。commit 讯息用中文摘要，结尾加 `Co-Authored-By`。
 - 分支：`develop` 是测试版（测试 bot），`main` 是稳定版。两个都在 Coolify 上自动部署：push `develop` → `yohaneowo-bot-dev`（Doppler `stg`，LINE 在 `line-dev.yohaneowo.com`，连 admin 的 dev 部署），push `main` → `yohaneowo-bot`（Doppler `prd`）。发布稳定版 = 用户在测试 bot 上确认后，把 `develop` 快进合并到 `main`；**没有用户确认不要合并进 `main`**。

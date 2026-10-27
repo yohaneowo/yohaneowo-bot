@@ -246,3 +246,12 @@ NAS 上使用 `compose.nas.yaml`，它只拉镜像，不会构建。里面包含
 - 测试 tunnel 的路由（`line-dev.yohaneowo.com` → `host.docker.internal:8787`）不需要修改：compose 让 LINE bot 容器使用 `host.docker.internal` 这个别名，同一条路由在电脑和 NAS 上都能用。
 - **测试版在 NAS 上运行时，要关掉电脑上的 `npm run dev`**，因为两边用的是同一组测试 bot 的 token。
 注册稳定版的 slash 命令：`npm run deploy`。
+
+## 授权：社区版与商业版
+
+原始码公开，采用 [PolyForm Noncommercial 1.0.0](LICENSE)（「原始码公开」授权，不是 OSI 定义的开源授权）：
+
+- **社区版（免费）**：个人学习、研究、兴趣专案、私人娱乐，以及慈善、教育、公共研究、政府等非营利机构使用，都可以免费使用、修改与散布（散布时要附上授权条款与 `Required Notice` 那一行）。
+- **商业版（需另行授权）**：任何商业用途——拿来赚钱、放进收费产品或服务、在公司业务中使用——都需要先取得商业授权。请在 GitHub 开 issue 联系作者。
+
+bot 调用的外部程式与服务（yt-dlp、ffmpeg、XHS-Downloader、Discord / LINE 平台，以及 admin 代查的 Trakt、TMDB 等接口）各有自己的授权与使用条款，不在本 repo 的授权范围内；Docker 镜像里附带的 yt-dlp、ffmpeg 依它们各自的授权散布。贡献须知与贡献者授权协议见 [CONTRIBUTING.md](CONTRIBUTING.md)。

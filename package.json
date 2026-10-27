@@ -18,7 +18,7 @@
 		"movies:import": "doppler run -p yohaneowo-bot -c dev -- node scripts/import-movies.js --confirm-dev"
 	},
 	"author": "",
-	"license": "ISC",
+	"license": "PolyForm-Noncommercial-1.0.0",
 	"keywords": [],
 	"description": "",
 	"dependencies": {
