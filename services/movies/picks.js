@@ -42,7 +42,7 @@ const LIMIT_TEASES = [
 	'额度用完了。推荐不是无限刷的，去看片 👀',
 ];
 
-// The day's picks left, then the bonus picks (100 to start, never reset; the owner adds more with /owner bonus).
+// The day's picks left, then the bonus picks (10 to start, never reset; the owner adds more with /owner bonus).
 function quotaLine(card) {
 	const daily = card.remainingToday ?? 0;
 	const bonus = card.bonusLeft ?? 0;
