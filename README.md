@@ -2,8 +2,7 @@
 
 个人用的 Discord bot：
 
-- **资产报告**：汇总 Binance、Bybit、Pionex 的资产，附带恐惧贪婪指数和 MSTR mNAV。可以用 `/portfolio` 查询，也会每天定时发送日报。
-- **上线私信**：从闲置变成在线时，私信一份资产快照（冷却 3 小时）。
+- **资产查询**：汇总 Binance、Bybit、Pionex 的资产，附带恐惧贪婪指数和 MSTR mNAV，用 `/portfolio` 查询（不会主动发送）。
 - **链接解析**：
   - 在 bot 所在的服务器或 bot 私信里贴链接，bot 会自动解析并上传内容。
   - 在任何地方（包括和朋友的私信）右键消息 →「应用 → 解析链接」，或输入 `/x url:<链接>`。
@@ -65,7 +64,6 @@
 |---|---|---|---|
 | Guilds | 否 | 一直需要 | slash 命令、频道 |
 | Guild Voice States | 否 | 一直需要 | 知道谁在哪个语音频道（动态语音频道） |
-| **Presence Intent** | ✅ | 设置了 `MASTER_ID` | 检测闲置 → 在线，触发私信 |
 | **Message Content Intent** | ✅ | `MEDIA_AUTO_DOWNLOAD=true` | 读取消息中的影片链接 |
 | Guild Messages / Direct Messages | 否 | `MEDIA_AUTO_DOWNLOAD=true` | 接收群组与私信的消息事件 |
 
@@ -79,9 +77,9 @@
 
 | 权限 | 用途 |
 |---|---|
-| 查看频道 | 读取频道、发送日报 |
-| 发送消息 | 日报、影片回复 |
-| 嵌入链接 | 资产报告的 Embed |
+| 查看频道 | 读取频道 |
+| 发送消息 | 影片回复 |
+| 嵌入链接 | 资产查询的 Embed |
 | 附加文件 | 上传影片 |
 | 阅读消息历史 | 回复（reply）原消息 |
 | 管理消息 | 可选：自动解析成功后删除原链接消息；没有这个权限时只是不删除 |
@@ -116,7 +114,6 @@ bot 无法读取两个用户之间的私信，所以那里只能由你主动触�
 ### 其他限制
 
 - 私信里 bot 无法删除用户的消息，这是 Discord 的限制，所以在私信里只会回复影片，不会删除原链接。
-- 上线私信要求 bot 与你在同一个服务器里，而且你允许接收该服务器成员的私信。
 - bot 上传文件的上限跟随服务器加成等级：未加成或私信为 10 MB，2 级 50 MB，3 级 100 MB。超过上限的影片会自动压缩。
 
 ## LINE
@@ -178,10 +175,6 @@ TMDB、Trakt、Anthropic、Voyage 的 key 都不在这里：电影功能的 TMDB
 | `TOKEN` | ✅ | bot token |
 | `CLIENT_ID` | ✅ | Application ID，注册 slash 命令时使用 |
 | `GUILD_ID` | ✅ | slash 命令要注册到的服务器 |
-| `PORTFOLIO_CHANNEL_ID` | | 日报发送的频道；留空则不发日报 |
-| `PORTFOLIO_CRON` | | 日报时间，默认 `0 9 * * *`（Asia/Shanghai） |
-| `SEND_PORTFOLIO_ON_BOOT` | | 设为 `true` 时，启动后立刻发一份日报 |
-| `MASTER_ID` | | 接收上线私信的用户 ID；留空则关闭此功能，也不会申请 Presence Intent |
 | `MEDIA_AUTO_DOWNLOAD` | | 设为 `true` 时开启消息中链接的自动解析，需要 Message Content Intent |
 | `BINANCE_API_KEY` / `BINANCE_SECRET` | | 只读 API key |
 | `BYBIT_API_KEY` / `BYBIT_SECRET` | | 只读 API key |
@@ -204,8 +197,6 @@ TMDB、Trakt、Anthropic、Voyage 的 key 都不在这里：电影功能的 TMDB
 | `MOVIE_MAX_PER_DAY` | | 已上映与即将上映各自每天最多推荐几部，默认 `3` |
 | `MOVIE_LANGUAGE` | | TMDB 片名与简介的语言，默认 `zh-TW` |
 | `DATA_DIR` | | 存放需要保留的资料（动态语音频道、电影推荐），默认是项目下的 `data/`。Docker 里是 `/app/data`，由 compose 的 `bot-data` volume 保存 |
-
-> 测试版的 `PORTFOLIO_CHANNEL_ID` 和 `MASTER_ID` 建议留空或改成测试用的值，否则两个 bot 会重复发送日报和私信。
 
 ## 开发（测试 bot，`develop` 分支）
 

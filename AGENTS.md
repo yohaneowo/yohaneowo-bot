@@ -1,6 +1,6 @@
 # yohaneowo-bot
 
-个人用的 Discord bot（`index.js`）和 LINE bot（`line.js`），Node.js + discord.js 14。功能：资产报告、链接解析（`services/media.js` 与 `services/sites/`）、动态语音频道、语音停留记录、电影推荐（`services/movies/`）。用户说明在 `README.md`。
+个人用的 Discord bot（`index.js`）和 LINE bot（`line.js`），Node.js + discord.js 14。功能：资产查询（`/portfolio`，不主动发送）、链接解析（`services/media.js` 与 `services/sites/`）、动态语音频道、语音停留记录、电影推荐（`services/movies/`）。用户说明在 `README.md`。
 
 管理后台是另一个 repo：**yohaneowo-admin**（`../yohaneowo-admin`，FastAPI + Vue）。bot 把群组、日志、资产、语音记录、依赖清单上报给它，见下方「与 admin 对接」。
 

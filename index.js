@@ -7,7 +7,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const cron = require('node-cron');
 const { Client, Collection, Events, GatewayIntentBits, MessageFlags, Partials } = require('discord.js');
-const { getPortfolioSnapshot, createPortfolioEmbed } = require('./services/portfolio');
+const { getPortfolioSnapshot } = require('./services/portfolio');
 const { extractMediaUrls, isOnlyMediaUrls } = require('./services/media');
 const { setupVoiceHubs } = require('./services/voiceHubs');
 const { setupVoiceLog } = require('./services/voiceLog');
@@ -44,17 +44,12 @@ const ADMIN_PORTFOLIO_INTERVAL_MS = 15 * 60 * 1000;
 // The admin checks dependencies upstream each time the list arrives, so this is the daily check.
 const ADMIN_DEPENDENCY_INTERVAL_MS = 24 * 60 * 60 * 1000;
 
-const statusNotifyUserId = process.env.MASTER_ID || process.env.DISCORD_STATUS_NOTIFY_USER_ID;
-const statusNotificationCooldownMs = 3 * 60 * 60 * 1000;
 // Auto-parses links posted in servers / bot DMs. Requires the privileged Message Content intent.
 // The /x and「解析链接」commands work without it.
 const mediaAutoDownloadEnabled = process.env.MEDIA_AUTO_DOWNLOAD === 'true';
 // GuildVoiceStates: who is in which voice channel, for the dynamic voice channels (/voice-hub).
 const clientIntents = [GatewayIntentBits.Guilds, GatewayIntentBits.GuildVoiceStates];
 const clientPartials = [];
-if (statusNotifyUserId) {
-	clientIntents.push(GatewayIntentBits.GuildPresences);
-}
 if (mediaAutoDownloadEnabled) {
 	clientIntents.push(
 		GatewayIntentBits.GuildMessages,
@@ -69,36 +64,6 @@ if (mediaAutoDownloadEnabled) {
 const client = new Client({ intents: clientIntents, partials: clientPartials });
 setupVoiceHubs(client);
 setupVoiceLog(client);
-let lastStatusNotificationAt = 0;
-let isSendingStatusNotification = false;
-
-async function sendDailyPortfolioReport() {
-	const channelId = process.env.PORTFOLIO_CHANNEL_ID;
-	if (!channelId) {
-		console.warn('PORTFOLIO_CHANNEL_ID is not set. Daily portfolio report is disabled.');
-		return;
-	}
-
-	try {
-		const channel = await client.channels.fetch(channelId);
-		if (!channel || !channel.isTextBased()) {
-			console.warn(`Channel ${channelId} is not a valid text channel.`);
-			return;
-		}
-
-		const snapshot = await getPortfolioSnapshot('all');
-		const embed = createPortfolioEmbed(
-			snapshot,
-			'每日资产报告',
-			client.user.displayAvatarURL({ size: 256 }),
-		);
-		await channel.send({ embeds: [embed] });
-		console.log('Daily portfolio report sent.');
-	}
-	catch (error) {
-		console.error('Failed to send daily portfolio report:', error);
-	}
-}
 
 function toAdminGroup(guild) {
 	return {
@@ -138,9 +103,6 @@ async function syncGuildsToAdmin() {
 // It makes some properties non-nullable.
 client.once(Events.ClientReady, async (readyClient) => {
 	console.log(`Ready! Logged in as ${readyClient.user.tag}`);
-	if (statusNotifyUserId) {
-		console.log('Idle-to-online DM notifications are enabled.');
-	}
 	if (mediaAutoDownloadEnabled) {
 		console.log('Media link auto-download is enabled.');
 	}
@@ -154,60 +116,13 @@ client.once(Events.ClientReady, async (readyClient) => {
 		startDotaNotifications(readyClient);
 	}
 
-	const cronExpression = process.env.PORTFOLIO_CRON || '0 9 * * *';
-	cron.schedule(
-		cronExpression,
-		async () => {
-			await sendDailyPortfolioReport();
-		},
-		{ timezone: 'Asia/Shanghai' },
-	);
-
 	if (moviesEnabled) {
 		cron.schedule(process.env.MOVIE_CRON || '0 10 * * *', () => runDailyMovies(readyClient), {
 			timezone: process.env.MOVIE_TIMEZONE || 'Asia/Taipei',
 		});
 		console.log('Daily movie recommendations are enabled.');
 	}
-
-	if (process.env.SEND_PORTFOLIO_ON_BOOT === 'true') {
-		await sendDailyPortfolioReport();
-	}
 });
-
-if (statusNotifyUserId) {
-	client.on(Events.PresenceUpdate, async (oldPresence, newPresence) => {
-		if (
-			newPresence?.userId !== statusNotifyUserId ||
-			oldPresence?.status !== 'idle' ||
-			newPresence.status !== 'online' ||
-			isSendingStatusNotification ||
-			Date.now() - lastStatusNotificationAt < statusNotificationCooldownMs
-		) {
-			return;
-		}
-
-		isSendingStatusNotification = true;
-		try {
-			const user = await client.users.fetch(statusNotifyUserId);
-			const snapshot = await getPortfolioSnapshot('all');
-			const embed = createPortfolioEmbed(
-				snapshot,
-				'全部资产快照',
-				user.displayAvatarURL({ size: 256 }),
-			);
-			await user.send({ embeds: [embed] });
-			lastStatusNotificationAt = Date.now();
-			console.log('Idle-to-online ALL portfolio DM sent.');
-		}
-		catch (error) {
-			console.warn('Failed to send idle-to-online DM notification:', error.message);
-		}
-		finally {
-			isSendingStatusNotification = false;
-		}
-	});
-}
 
 if (adminApiEnabled) {
 	client.on(Events.GuildCreate, (guild) => reportJoin('discord', toAdminGroup(guild)));

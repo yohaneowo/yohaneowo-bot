@@ -3,10 +3,10 @@
 	"critical": ["discord.js", "@line/bot-sdk", "yt-dlp"],
 	"npm": {
 		"@line/bot-sdk": "LINE bot",
-		"ccxt": "交易所资产查询（/portfolio、日报、首页总资产）",
+		"ccxt": "交易所资产查询（/portfolio、首页总资产）",
 		"discord.js": "Discord bot",
 		"express": "LINE webhook 与对外的媒体文件服务",
-		"node-cron": "每日资产报告排程"
+		"node-cron": "每日电影推荐排程"
 	},
 	"external": [
 		{
