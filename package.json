@@ -14,7 +14,7 @@
 		"docker:release": "node scripts/docker-publish.js latest",
 		"format": "prettier --write .",
 		"format:check": "prettier --check .",
-		"test": "echo \"Error: no test specified\" && exit 1",
+		"test": "node --test \"test/*.test.js\"",
 		"movies:import": "doppler run -p yohaneowo-bot -c dev -- node scripts/import-movies.js --confirm-dev"
 	},
 	"author": "",

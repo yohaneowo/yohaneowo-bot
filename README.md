@@ -28,6 +28,8 @@
 
   小红书：App 分享出来的链接没有 `xsec_token`，网页版和 yt-dlp 都会被导到登录页。所以另外跑一个 XHS-Downloader 服务来取得笔记资料。它不需要登录，但没有 cookie 时影片只有 720p。NAS 上由 `compose.nas.yaml` 启动，开发时由 `npm run dev` 启动。
 
+  动图（X 的 GIF、实况图）：经 LinkHub 解析时优先发 LinkHub 转好的循环 GIF（Discord 里 mp4 只播一次），体积以剩余上传额度为上限；GIF 太大或转档失败就改发同一则的 mp4。普通影片仍发 mp4。
+
   X 的限制：年龄限制和锁帐号的贴文，嵌入接口不会给资料，只能靠 yt-dlp 尝试下载影片，通常也会失败。
 
   支持的网站列在 `services/media.js` 的 `SUPPORTED_SITES`，每个网站在 `services/sites/` 里有自己的处理函数。

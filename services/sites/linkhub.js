@@ -1,7 +1,7 @@
 const fs = require('node:fs');
 const fsp = require('node:fs/promises');
 const path = require('node:path');
-const { Readable } = require('node:stream');
+const { Readable, Transform } = require('node:stream');
 const { pipeline } = require('node:stream/promises');
 const { fitVideoToLimit } = require('./video');
 const { imageExtension } = require('./download');
@@ -57,15 +57,91 @@ function formatAuthor(author) {
 	return name || handle || '';
 }
 
+// A GIF format: the gateway's transcode (quality=gif) or a GIF the site already serves.
+function isGifFormat(format) {
+	return (
+		format.quality === 'gif' ||
+		(format.ext ?? '').toLowerCase() === 'gif' ||
+		(format.mimeType ?? '').toLowerCase() === 'image/gif'
+	);
+}
+
 // Prefer a single H.264 file (plays inline everywhere in Discord) that fits the upload limit when
 // the size is known, then any H.264, then any combined video + audio, then whatever is first.
+// GIFs are never picked here; animated items try them first in downloadItem.
 function pickVideoFormat(formats, maxBytes) {
-	const combined = formats.filter(
+	const videos = formats.filter((format) => !isGifFormat(format));
+	const combined = videos.filter(
 		(format) => format.hasVideo !== false && format.hasAudio !== false,
 	);
 	const h264 = combined.filter((format) => /^(?:h264|avc1)/i.test(format.videoCodec ?? ''));
 	const fits = (format) => format.sizeBytes && format.sizeBytes <= maxBytes;
-	return h264.find(fits) ?? h264[0] ?? combined.find(fits) ?? combined[0] ?? formats[0] ?? null;
+	return h264.find(fits) ?? h264[0] ?? combined.find(fits) ?? combined[0] ?? videos[0] ?? null;
+}
+
+class GifUnavailableError extends Error {
+	constructor(message, code) {
+		super(message);
+		this.code = code;
+	}
+}
+
+// Downloads an animated item's GIF, capped at maxBytes. Through the gateway, ?maxBytes= makes the
+// transcode pick a size that fits (413 GIF_TOO_LARGE when even the smallest step doesn't); a GIF
+// the site already serves isn't resized, so the size is checked here. Any failure throws
+// GifUnavailableError and the caller falls back to the item's mp4.
+async function downloadGif(format, filePath, maxBytes) {
+	const viaGateway = Boolean(format.downloadUrl);
+	const url = new URL(format.downloadUrl ?? format.url);
+	if (viaGateway) url.searchParams.set('maxBytes', String(Math.max(1, Math.floor(maxBytes))));
+	let response;
+	try {
+		response = await fetch(url, {
+			headers: viaGateway ? authHeaders() : (format.headers ?? {}),
+			signal: AbortSignal.timeout(DOWNLOAD_TIMEOUT_MS),
+		});
+	}
+	catch (error) {
+		throw new GifUnavailableError(`GIF request failed: ${error.message}`, 'NETWORK');
+	}
+	if (!response.ok) {
+		const payload = await response.json().catch(() => null);
+		const code = payload?.code ?? `HTTP_${response.status}`;
+		throw new GifUnavailableError(`LinkHub GIF HTTP ${response.status} ${code}`, code);
+	}
+	const contentType = (response.headers.get('content-type') ?? '')
+		.split(';')[0]
+		.trim()
+		.toLowerCase();
+	if (contentType && contentType !== 'image/gif') {
+		await response.body?.cancel().catch(() => undefined);
+		throw new GifUnavailableError(`GIF response is ${contentType}`, 'NOT_GIF');
+	}
+	if (Number(response.headers.get('content-length')) > maxBytes) {
+		await response.body?.cancel().catch(() => undefined);
+		throw new GifUnavailableError('GIF is over the upload limit', 'GIF_TOO_LARGE');
+	}
+	// content-length may be missing or wrong, so count while streaming and stop at the limit.
+	let size = 0;
+	const limit = new Transform({
+		transform(chunk, _encoding, callback) {
+			size += chunk.length;
+			if (size > maxBytes) {
+				callback(new GifUnavailableError('GIF is over the upload limit', 'GIF_TOO_LARGE'));
+				return;
+			}
+			callback(null, chunk);
+		},
+	});
+	try {
+		await pipeline(Readable.fromWeb(response.body), limit, fs.createWriteStream(filePath));
+	}
+	catch (error) {
+		await fsp.rm(filePath, { force: true });
+		if (error instanceof GifUnavailableError) throw error;
+		throw new GifUnavailableError(`GIF download failed: ${error.message}`, 'NETWORK');
+	}
+	mediaLog.info(`downloaded GIF ${formatMb(size)} via ${viaGateway ? 'LinkHub' : url.hostname}`);
 }
 
 // Prefer downloadUrl: the gateway adds the right request headers, and for sites whose direct
@@ -88,8 +164,24 @@ async function downloadFormat(format, filePath) {
 
 async function downloadItem(item, dir, index, maxBytes) {
 	if (!item.formats?.length) return null;
+	// Animated items (X GIFs, live photos) go out as a GIF: Discord loops it, while an mp4 plays once.
+	const gifFormat =
+		item.type === 'video' && item.animation ? item.formats.find(isGifFormat) : null;
+	if (gifFormat) {
+		const name = `image-${index}.gif`;
+		const filePath = path.join(dir, name);
+		try {
+			await downloadGif(gifFormat, filePath, maxBytes);
+			return { path: filePath, name, ext: 'gif', isVideo: false };
+		}
+		catch (error) {
+			if (!(error instanceof GifUnavailableError)) throw error;
+			mediaLog.info(`GIF unavailable (${error.code}): ${error.message}; using the mp4`);
+		}
+	}
 	if (item.type === 'video' || item.type === 'audio') {
 		const format = pickVideoFormat(item.formats, maxBytes);
+		if (!format) return null;
 		const ext = /^[a-z0-9]{2,5}$/i.test(format.ext ?? '') ? format.ext.toLowerCase() : 'mp4';
 		const name = `video-${index}.${ext}`;
 		const filePath = path.join(dir, name);
@@ -189,4 +281,7 @@ module.exports = {
 	fetchViaLinkHub,
 	withLinkHub,
 	isConfigured,
+	// For tests.
+	pickVideoFormat,
+	downloadItem,
 };
