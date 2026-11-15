@@ -269,7 +269,8 @@ function withLinkHub(fallback) {
 			return await fetchViaLinkHub(url, dir, maxBytes, onStage);
 		}
 		catch (error) {
-			if (error instanceof UserFacingError || error.code === 'VIDEO_TOO_LONG') throw error;
+			// An empty LinkHub file is worth one retry through the local parser.
+			if (error.code !== 'EMPTY_FILE' && (error instanceof UserFacingError || error.code === 'VIDEO_TOO_LONG')) throw error;
 			mediaLog.warn(`LinkHub failed: ${error.message}; falling back to the local parser`);
 			await clearDir(dir);
 			return fallback(url, dir, maxBytes, onStage);

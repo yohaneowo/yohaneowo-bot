@@ -16,6 +16,8 @@ const COMPRESS_TIMEOUT_MS = 5 * 60 * 1000;
 // With a 10 MB limit that is roughly 90 seconds, with 50 MB about 7 minutes.
 const MIN_VIDEO_KBPS = 700;
 const AUDIO_KBPS = 96;
+// A real video is never this small; anything under it is an empty or truncated download.
+const MIN_VIDEO_BYTES = 10 * 1000;
 
 // Leaves room for the separate audio track when picking a video-only stream to merge.
 const AUDIO_ALLOWANCE_BYTES = 2 * 1000 * 1000;
@@ -109,7 +111,30 @@ async function probeVideo(filePath) {
 	}
 	catch (error) {
 		mediaLog.warn(`ffprobe failed: ${error.message}`);
-		return null;
+		// A missing binary says nothing about the file, so don't treat it as a broken download.
+		return error.code === 'ENOENT' ? { unavailable: true } : null;
+	}
+}
+
+// Thrown when a download "succeeded" but the file is empty, truncated or unreadable. The caller
+// logs error_message "empty_file" and never counts it as posted (so the user's message is kept).
+class EmptyFileError extends UserFacingError {
+	constructor(detail) {
+		super('下载到的影片是空的或已损坏，请稍后再试');
+		this.name = 'EmptyFileError';
+		this.code = 'EMPTY_FILE';
+		this.detail = detail;
+	}
+}
+
+// size: bytes on disk; probe: probeVideo() result (null = ffprobe could not read the file).
+function assertUsableVideo(size, probe, label = 'video') {
+	if (size < MIN_VIDEO_BYTES) {
+		throw new EmptyFileError(`${label} is ${size} bytes (minimum ${MIN_VIDEO_BYTES})`);
+	}
+	if (probe?.unavailable) return;
+	if (!probe || !(probe.duration > 0)) {
+		throw new EmptyFileError(`${label} has no readable duration (${size} bytes)`);
 	}
 }
 
@@ -161,9 +186,11 @@ async function compressToFit(inputPath, outputPath, durationSeconds, maxBytes) {
 
 // Compresses a downloaded video when it exceeds maxBytes. Duration comes from the site when
 // known, otherwise from the file itself.
-async function fitVideoToLimit(filePath, dir, maxBytes, onStage, knownDuration) {
+// probe is injectable for tests.
+async function fitVideoToLimit(filePath, dir, maxBytes, onStage, knownDuration, probeFn = probeVideo) {
 	const { size } = await fs.stat(filePath);
-	const probe = await probeVideo(filePath);
+	const probe = await probeFn(filePath);
+	assertUsableVideo(size, probe);
 	const duration = knownDuration > 0 ? knownDuration : probe?.duration;
 	mediaLog.info(
 		`video ${probe?.width ?? '?'}x${probe?.height ?? '?'} ${probe?.codec ?? '?'}, ` +
@@ -176,6 +203,7 @@ async function fitVideoToLimit(filePath, dir, maxBytes, onStage, knownDuration) 
 	onStage?.('compressing');
 	mediaLog.info(`over the ${formatMb(maxBytes)} limit, compressing`);
 	const compressedPath = await compressToFit(filePath, path.join(dir, 'compressed.mp4'), duration, maxBytes);
+	assertUsableVideo((await fs.stat(compressedPath)).size, await probeVideo(compressedPath), 'compressed video');
 	return { filePath: compressedPath, compressed: true };
 }
 
@@ -228,6 +256,8 @@ async function fetchVideo(url, dir, maxBytes, onStage) {
 }
 
 module.exports = {
+	EmptyFileError,
+	MIN_VIDEO_BYTES,
 	fetchVideo,
 	fitVideoToLimit,
 };

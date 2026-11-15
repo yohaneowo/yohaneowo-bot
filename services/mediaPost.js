@@ -114,7 +114,10 @@ async function postMediaInSiteScope({ url, maxBytes, sharerId, update, logContex
 	catch (error) {
 		// Download failures are already logged by downloadMedia; only the upload is left.
 		if (media) media.log.warn(`upload to Discord failed: ${error.message}`);
-		logResult('failed', { error_message: error.message });
+		// EmptyFileError is tagged so empty downloads can be counted and alerted on separately.
+		logResult('failed', {
+			error_message: error.code === 'EMPTY_FILE' ? `empty_file: ${error.detail ?? error.message}` : error.message,
+		});
 		await pendingEdit;
 		await setStatus(error.userMessage ? `⚠️ ${error.userMessage}` : '❌ 解析失败了 😢');
 		return false;

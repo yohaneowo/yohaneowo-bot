@@ -1,7 +1,7 @@
 const fs = require('node:fs/promises');
 const os = require('node:os');
 const path = require('node:path');
-const { fetchVideo } = require('./sites/video');
+const { fetchVideo, EmptyFileError } = require('./sites/video');
 const { fetchFacebookPost } = require('./sites/facebook');
 const { fetchInstagramPost } = require('./sites/instagram');
 const { fetchXiaohongshuNote } = require('./sites/xiaohongshu');
@@ -110,6 +110,10 @@ async function downloadMedia(url, maxBytes, onStage) {
 		const sizes = await Promise.all(
 			result.files.map((file) => fs.stat(file.path).then((stat) => stat.size)),
 		);
+		// Last line of defence for every site: a 0-byte attachment is never a valid result.
+		if (sizes.some((size) => size === 0)) {
+			throw new EmptyFileError('a downloaded file is 0 bytes');
+		}
 		log.info(
 			`parsed: ${result.files.length} file(s), ${formatMb(sizes.reduce((a, b) => a + b, 0))}` +
 				`${result.compressed ? ', compressed' : ''}${result.note ? `, note "${result.note}"` : ''}`,
