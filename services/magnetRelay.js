@@ -28,12 +28,14 @@ function isHttpUrl(value) {
 	}
 }
 
+// Discord users allowed to use the feature. MAGNET_USER_IDS (comma separated) replaces this list.
+const DEFAULT_USER_IDS = ['559762654084857876', '406386663007322113'];
+
 // The feature is on only when the allowed users, the webhook URL and the signing secret are all set.
 function loadConfig(env = process.env) {
+	const configured = String(env.MAGNET_USER_IDS ?? '').trim();
 	const userIds = new Set(
-		String(env.MAGNET_USER_IDS ?? '')
-			.split(/[,\s]+/)
-			.filter((id) => /^\d{5,25}$/.test(id)),
+		(configured ? configured.split(/[,\s]+/) : DEFAULT_USER_IDS).filter((id) => /^\d{5,25}$/.test(id)),
 	);
 	const url = String(env.MAGNET_WEBHOOK_URL ?? '').trim();
 	const secret = String(env.MAGNET_WEBHOOK_SECRET ?? '');

@@ -67,7 +67,6 @@ const noWait = () => Promise.resolve();
 test('config is enabled only with users, a valid URL and a secret', () => {
 	assert.equal(config().enabled, true);
 	assert.deepEqual([...config({ MAGNET_USER_IDS: `${ALLOWED}, ${OTHER}` }).userIds], [ALLOWED, OTHER]);
-	assert.equal(config({ MAGNET_USER_IDS: '' }).enabled, false);
 	assert.equal(config({ MAGNET_USER_IDS: 'not-an-id' }).enabled, false);
 	assert.equal(config({ MAGNET_WEBHOOK_URL: 'not a url' }).enabled, false);
 	assert.equal(config({ MAGNET_WEBHOOK_URL: 'ftp://x.test/' }).enabled, false);
@@ -75,6 +74,19 @@ test('config is enabled only with users, a valid URL and a secret', () => {
 	assert.equal(loadConfig({}).enabled, false);
 	assert.equal(config().metaLookup, true);
 	assert.equal(config({ MAGNET_META_LOOKUP: 'false' }).metaLookup, false);
+});
+
+test('without MAGNET_USER_IDS the two built-in users are allowed, and the variable replaces them', () => {
+	const bare = { MAGNET_WEBHOOK_URL: 'https://openbot.test/hook', MAGNET_WEBHOOK_SECRET: SECRET };
+	for (const env of [bare, { ...bare, MAGNET_USER_IDS: '' }, { ...bare, MAGNET_USER_IDS: '  ' }]) {
+		const defaults = loadConfig(env);
+		assert.equal(defaults.enabled, true);
+		assert.equal(defaults.userIds.size, 2);
+		assert.ok([...defaults.userIds].every((id) => /^\d{15,25}$/.test(id)));
+	}
+	assert.deepEqual([...loadConfig({ ...bare, MAGNET_USER_IDS: ALLOWED }).userIds], [ALLOWED]);
+	// The URL and secret are still required.
+	assert.equal(loadConfig({}).enabled, false);
 });
 
 test('parseMagnet reads hex and base32 info hashes to the same value', () => {
