@@ -394,6 +394,48 @@ test('a link handed off recently is skipped at the card step and at the button s
 	assert.equal(third.replies[0].embeds, undefined);
 });
 
+test('two cards for the same link pressed at the same moment send only one hand-off', async () => {
+	const state = createState();
+	let release;
+	const gate = new Promise((resolve) => {
+		release = resolve;
+	});
+	const calls = [];
+	const slowFetch = async (url, init) => {
+		calls.push({ url, init });
+		await gate;
+		return { ok: true, status: 200 };
+	};
+	const options = { ...cacheHit(), send: { fetchImpl: slowFetch, wait: noWait } };
+	const first = fakeMessage(TORRENT_MAGNET);
+	const second = fakeMessage(TORRENT_MAGNET);
+	second.id = 'm2';
+	await handleMagnetMessage(first, config(), state, options);
+	await handleMagnetMessage(second, config(), state, options);
+
+	const pressA = fakeButton(buttonId(first, 0));
+	const pressB = fakeButton(buttonId(second, 0));
+	const handlingA = handleMagnetButton(pressA, config(), state, options);
+	const handlingB = handleMagnetButton(pressB, config(), state, options);
+	await new Promise((resolve) => setImmediate(resolve));
+	release();
+	await Promise.all([handlingA, handlingB]);
+
+	assert.equal(calls.length, 1);
+	assert.match(pressA.calls.at(-1)[1].content, /已转交/);
+	assert.match(pressB.calls.at(-1)[1].content, /刚处理过/);
+	assert.equal(state.inflight.size, 0);
+});
+
+test('a failed send frees the link so it can be confirmed again', async () => {
+	const state = createState();
+	const message = fakeMessage(TORRENT_MAGNET);
+	await handleMagnetMessage(message, config(), state, cacheHit());
+	const failing = { send: { fetchImpl: fakeFetch(['throw']), wait: noWait } };
+	await handleMagnetButton(fakeButton(buttonId(message, 0)), config(), state, failing);
+	assert.equal(state.inflight.size, 0);
+});
+
 test('pending requests expire after the TTL and the store is capped', () => {
 	let time = 0;
 	const store = createPendingStore(1000, () => time);

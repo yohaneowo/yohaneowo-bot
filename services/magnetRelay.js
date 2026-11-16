@@ -179,7 +179,8 @@ function createPendingStore(ttlMs = PENDING_TTL_MS, now = Date.now) {
 }
 
 function createState() {
-	return { deduper: createDeduper(), pending: createPendingStore() };
+	// inflight: info hashes whose hand-off is being sent right now (a second card for the same link must wait out the first).
+	return { deduper: createDeduper(), pending: createPendingStore(), inflight: new Set() };
 }
 
 function buildCard({ name, infohash, meta, token }) {
@@ -275,11 +276,12 @@ async function handleMagnetButton(interaction, config, state, options = {}) {
 	}
 	entry.busy = true;
 	await interaction.deferUpdate();
-	if (state.deduper.has(entry.infohash)) {
+	if (state.deduper.has(entry.infohash) || state.inflight.has(entry.infohash)) {
 		state.pending.delete(token);
 		await interaction.editReply({ content: '⏭️ 这个磁力刚处理过，已略过', components: [] });
 		return true;
 	}
+	state.inflight.add(entry.infohash);
 	try {
 		await sendWebhook(
 			config,
@@ -305,6 +307,9 @@ async function handleMagnetButton(interaction, config, state, options = {}) {
 		entry.busy = false;
 		console.warn(`Magnet hand-off failed for ${entry.infohash}: ${error.message}`);
 		await interaction.editReply({ content: '⚠️ 转交失败，可以再按一次确认，或稍后重试' });
+	}
+	finally {
+		state.inflight.delete(entry.infohash);
 	}
 	return true;
 }
