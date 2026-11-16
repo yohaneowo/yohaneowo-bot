@@ -34,6 +34,12 @@ const {
 	installConsoleCapture,
 } = require('./services/adminApi');
 const { collectDependencies } = require('./services/dependencies');
+const {
+	loadConfig: loadMagnetConfig,
+	createState: createMagnetState,
+	handleMagnetMessage,
+	handleMagnetButton,
+} = require('./services/magnetRelay');
 
 installConsoleCapture('discord');
 
@@ -47,10 +53,14 @@ const ADMIN_DEPENDENCY_INTERVAL_MS = 24 * 60 * 60 * 1000;
 // Auto-parses links posted in servers / bot DMs. Requires the privileged Message Content intent.
 // The /x and「解析链接」commands work without it.
 const mediaAutoDownloadEnabled = process.env.MEDIA_AUTO_DOWNLOAD === 'true';
+// Magnet links DMed by a few allowed users are confirmed with buttons, then handed to OpenBot (see
+// services/magnetRelay.js); it reads message text, so it needs the same Message Content intent.
+const magnetConfig = loadMagnetConfig();
+const magnetState = createMagnetState();
 // GuildVoiceStates: who is in which voice channel, for the dynamic voice channels (/voice-hub).
 const clientIntents = [GatewayIntentBits.Guilds, GatewayIntentBits.GuildVoiceStates];
 const clientPartials = [];
-if (mediaAutoDownloadEnabled) {
+if (mediaAutoDownloadEnabled || magnetConfig.enabled) {
 	clientIntents.push(
 		GatewayIntentBits.GuildMessages,
 		GatewayIntentBits.DirectMessages,
@@ -179,6 +189,15 @@ if (mediaAutoDownloadEnabled) {
 	});
 }
 
+if (magnetConfig.enabled) {
+	client.on(Events.MessageCreate, (message) =>
+		handleMagnetMessage(message, magnetConfig, magnetState).catch((error) =>
+			console.warn('Magnet handler failed:', error.message),
+		),
+	);
+	console.log('Magnet hand-off is enabled.');
+}
+
 client.commands = new Collection();
 const foldersPath = path.join(__dirname, 'commands');
 const commandFolders = fs.readdirSync(foldersPath);
@@ -206,6 +225,12 @@ client.on(Events.InteractionCreate, async (interaction) => {
 			.get(interaction.commandName)
 			?.autocomplete?.(interaction)
 			.catch((error) => console.warn(`Autocomplete for /${interaction.commandName} failed:`, error.message));
+		return;
+	}
+	if (interaction.isButton() && interaction.customId.startsWith('magnet:')) {
+		await handleMagnetButton(interaction, magnetConfig, magnetState).catch((error) =>
+			console.warn('Magnet button failed:', error.message),
+		);
 		return;
 	}
 	if (interaction.isButton() && interaction.customId.startsWith('movie:')) {

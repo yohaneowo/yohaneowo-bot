@@ -66,8 +66,8 @@
 |---|---|---|---|
 | Guilds | 否 | 一直需要 | slash 命令、频道 |
 | Guild Voice States | 否 | 一直需要 | 知道谁在哪个语音频道（动态语音频道） |
-| **Message Content Intent** | ✅ | `MEDIA_AUTO_DOWNLOAD=true` | 读取消息中的影片链接 |
-| Guild Messages / Direct Messages | 否 | `MEDIA_AUTO_DOWNLOAD=true` | 接收群组与私信的消息事件 |
+| **Message Content Intent** | ✅ | `MEDIA_AUTO_DOWNLOAD=true` 或磁力转交已开启 | 读取消息中的影片链接、磁力链接 |
+| Guild Messages / Direct Messages | 否 | `MEDIA_AUTO_DOWNLOAD=true` 或磁力转交已开启 | 接收群组与私信的消息事件 |
 
 `/x` 和「解析链接」不需要任何特权 intent，只有自动解析需要。
 
@@ -178,6 +178,8 @@ TMDB、Trakt、Anthropic、Voyage 的 key 都不在这里：电影功能的 TMDB
 | `CLIENT_ID` | ✅ | Application ID，注册 slash 命令时使用 |
 | `GUILD_ID` | ✅ | slash 命令要注册到的服务器 |
 | `MEDIA_AUTO_DOWNLOAD` | | 设为 `true` 时开启消息中链接的自动解析，需要 Message Content Intent |
+| `MAGNET_USER_IDS` / `MAGNET_WEBHOOK_URL` / `MAGNET_WEBHOOK_SECRET` | | 三个都设了才开启磁力链接转交，只在**私信**生效：`MAGNET_USER_IDS`（Discord 用户 ID，逗号分隔）里的人私信 bot 磁力链接时，bot 会查标题和大小，回一张带「确认／取消」按钮的卡片；按确认后才用签章 webhook 把链接交给 OpenBot（由 OpenBot 的助手加进 PikPak）。其他人、服务器里的磁力链接一律忽略。bot 本身不持有 PikPak 帐密，也不删原消息。同一个磁力 30 分钟内只转交一次，卡片 10 分钟没按就过期。需要 Message Content Intent |
+| `MAGNET_META_LOOKUP` | | 默认开启：查标题时会把磁力的 infohash 发给公开的 torrent 快取（itorrents.org），取回 .torrent 并用 SHA-1 对照 infohash 才采用。设为 `false` 就不对外查询，卡片只显示链接自带的名称 |
 | `BINANCE_API_KEY` / `BINANCE_SECRET` | | 只读 API key |
 | `BYBIT_API_KEY` / `BYBIT_SECRET` | | 只读 API key |
 | `PIONEX_API_KEY` / `PIONEX_SECRET` | | 只读 API key |
