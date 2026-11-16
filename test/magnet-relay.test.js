@@ -146,10 +146,22 @@ test('webhook request carries a verifiable signature and the expected body', asy
 	assert.equal(body.type, 'bot.magnet_request');
 	assert.equal(body.data.infohash, HEX);
 	assert.equal(init.headers['x-openbot-timestamp'], '1700000000');
-	assert.equal(init.headers['x-openbot-delivery-id'], `magnet-${HEX}-m1`);
-	const expected = signRequest(SECRET, '1700000000', `magnet-${HEX}-m1`, init.body);
+	const deliveryId = init.headers['x-openbot-delivery-id'];
+	assert.match(deliveryId, new RegExp(`^magnet-${HEX}-m1-[0-9a-f]{8}$`));
+	const expected = signRequest(SECRET, '1700000000', deliveryId, init.body);
 	assert.equal(init.headers['x-openbot-signature'], `sha256=${expected}`);
 	assert.match(expected, /^[0-9a-f]{64}$/);
+});
+
+test('retries inside one hand-off share a delivery id, separate hand-offs do not', async () => {
+	const retried = fakeFetch([502, 200]);
+	await sendWebhook(config(), { infohash: HEX, message_id: 'm1' }, { fetchImpl: retried, wait: noWait });
+	const [first, second] = retried.calls.map((call) => call.init.headers['x-openbot-delivery-id']);
+	assert.equal(first, second);
+
+	const again = fakeFetch([200]);
+	await sendWebhook(config(), { infohash: HEX, message_id: 'm1' }, { fetchImpl: again, wait: noWait });
+	assert.notEqual(again.calls[0].init.headers['x-openbot-delivery-id'], first);
 });
 
 test('webhook retries a server error once and gives up on a client error', async () => {

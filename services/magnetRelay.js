@@ -122,7 +122,8 @@ const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 async function sendWebhook(config, data, { fetchImpl = fetch, now = Date.now, wait = sleep } = {}) {
 	const body = JSON.stringify({ type: EVENT_TYPE, data });
-	const deliveryId = `magnet-${data.infohash}-${data.message_id}`;
+	// Unique per hand-off (OpenBot drops repeated delivery ids); retries inside one hand-off share it.
+	const deliveryId = `magnet-${data.infohash}-${data.message_id}-${crypto.randomBytes(4).toString('hex')}`;
 	let lastError;
 	for (let attempt = 1; attempt <= SEND_ATTEMPTS; attempt++) {
 		const timestamp = String(Math.floor(now() / 1000));
