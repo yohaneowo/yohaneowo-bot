@@ -10,7 +10,8 @@ const {
 	normalizeUrlKey,
 } = require('../services/sites/chain');
 const { currentSignal } = require('../services/sites/deadline');
-const { EmptyFileError } = require('../services/sites/video');
+const { spawnSync } = require('node:child_process');
+const { EmptyFileError, probeVideo } = require('../services/sites/video');
 const { UserFacingError } = require('../services/sites/errors');
 
 const URL_A = 'https://www.youtube.com/shorts/AAAAAAAAAAA';
@@ -72,7 +73,7 @@ const throwEmpty = () => {
 };
 
 // The fake files are not real videos: ffprobe is replaced by a probe that reads them as 2 seconds long.
-const readable = async () => ({ duration: 2 });
+const readable = async () => ({ duration: 2, codec: 'h264' });
 
 function chainOf(rungs, options = {}) {
 	return createFallbackChain({
@@ -299,7 +300,7 @@ test('every video in a result must have a readable length; images are not probed
 	const probed = [];
 	const probe = async (file) => {
 		probed.push(path.basename(file));
-		return file.includes('rung-1') ? null : { duration: 3 };
+		return file.includes('rung-1') ? null : { duration: 3, codec: 'h264' };
 	};
 	const first = rung('linkhub', (d) => ({
 		files: [fileResult(d, 'image-1.jpg', 3000), fileResult(d, 'video-2.mp4', 30000)],
@@ -464,6 +465,66 @@ test('normalizeUrlKey: the same content maps to one key, different content does 
 		normalizeUrlKey('https://www.facebook.com/watch/?v=222'),
 	);
 	assert.equal(normalizeUrlKey('not a url'), 'not a url');
+});
+
+test('a file check that hangs is cancelled by the budget: a timeout, no success, no cooldown', async () => {
+	const state = createRepairState(Date.now);
+	let sawSignal = false;
+	const stuckProbe = () => new Promise((resolve, reject) => {
+		const signal = currentSignal();
+		sawSignal = Boolean(signal);
+		signal.addEventListener('abort', () => reject(signal.reason));
+	});
+	const chain = chainOf([rung('local', good)], { state, now: Date.now, totalMs: 50, probe: stuckProbe });
+	await assert.rejects(chain(URL_A, dir, MAX), (error) => error.code === 'MEDIA_TIMEOUT');
+	assert.equal(sawSignal, true, 'the file check runs under the budget signal');
+	assert.equal(state.consecutiveFailures('YouTube'), 0);
+	assert.equal(state.isCoolingDown(normalizeUrlKey(URL_A)), false);
+});
+
+test('a rung that only finishes after the budget was spent is not counted as a success', async () => {
+	const state = createRepairState(Date.now);
+	// Ignores the cancellation and its answer is fine, but it comes too late.
+	const slowProbe = async () => {
+		await sleep(80);
+		return { duration: 2, codec: 'h264' };
+	};
+	const chain = chainOf([rung('local', good)], { state, now: Date.now, totalMs: 30, probe: slowProbe });
+	await assert.rejects(chain(URL_A, dir, MAX), (error) => error.code === 'MEDIA_TIMEOUT');
+	assert.equal(state.consecutiveFailures('YouTube'), 0);
+	assert.equal(state.isCoolingDown(normalizeUrlKey(URL_A)), false);
+});
+
+test('an mp4 that has a length but no video stream (audio only) fails the file check', async () => {
+	const probe = async (file) => (file.includes('rung-1') ? { duration: 3 } : { duration: 3, codec: 'h264' });
+	const first = rung('linkhub', (d) => ({ files: [fileResult(d, 'video.mp4', 30000)], author: '', text: '' }));
+	const second = rung('local', good);
+	const result = await chainOf([first, second], { probe })(URL_A, dir, MAX);
+	assert.equal(result.files.length, 1);
+	assert.equal(second.calls, 1, 'the audio-only file made the first rung fail');
+});
+
+const haveFfmpeg = spawnSync('ffmpeg', ['-version']).status === 0 && spawnSync('ffprobe', ['-version']).status === 0;
+
+test('with the real ffprobe: an audio-only mp4 is rejected and a real video passes', { skip: !haveFfmpeg && 'ffmpeg / ffprobe are not installed' }, async () => {
+	function make(name, args) {
+		const file = path.join(dir, name);
+		const made = spawnSync('ffmpeg', ['-loglevel', 'error', ...args, '-y', file], { encoding: 'utf8' });
+		assert.equal(made.status, 0, made.stderr);
+		return file;
+	}
+	const audioOnly = make('audio-only.mp4', ['-f', 'lavfi', '-i', 'sine=frequency=440:duration=1', '-c:a', 'aac']);
+	const realVideo = make('real.mp4', ['-f', 'lavfi', '-i', 'testsrc=size=320x240:rate=15', '-t', '2', '-pix_fmt', 'yuv420p', '-c:v', 'libx264']);
+	const returning = (source) => (d) => {
+		const target = path.join(d, 'video.mp4');
+		fs.copyFileSync(source, target);
+		return { files: [{ path: target, name: 'video.mp4' }], author: '', text: '' };
+	};
+	const first = rung('local', returning(audioOnly));
+	const second = rung('local-2', returning(realVideo));
+	const result = await chainOf([first, second], { probe: probeVideo })(URL_A, dir, MAX);
+	assert.equal(result.files.length, 1);
+	assert.equal(second.calls, 1, 'the audio-only file was rejected, the real video accepted');
 });
 
 test('a repair rung that is disabled or not configured is silently skipped', async () => {

@@ -130,8 +130,9 @@ async function assertUsableResult(result, probe) {
 		if (!VIDEO_FILE.test(file.path)) continue;
 		const info = await probe(file.path);
 		if (info?.unavailable) continue;
-		if (!info || !(info.duration > 0)) {
-			throw new EmptyFileError(`${file.name} has no readable duration (${size} bytes)`);
+		// info.codec is the first video stream's: an audio-only mp4 has a duration but nothing to show.
+		if (!info || !(info.duration > 0) || !info.codec) {
+			throw new EmptyFileError(`${file.name} has no readable video stream or duration (${size} bytes)`);
 		}
 	}
 }
@@ -193,8 +194,14 @@ function createFallbackChain({
 			const timer = setTimeout(() => controller.abort(new DeadlineError(rung.name)), Math.max(0, budgetEnd - now()));
 			const rungStartedAt = now();
 			try {
-				const result = await runWithSignal(controller.signal, () => rung.run(url, rungDir, maxBytes, onStage));
-				await assertUsableResult(result, probe);
+				// The file check runs under the same budget (a stuck ffprobe is cancelled too), and a rung
+				// that only finished after the budget was spent does not count as a success.
+				const result = await runWithSignal(controller.signal, async () => {
+					const fetched = await rung.run(url, rungDir, maxBytes, onStage);
+					await assertUsableResult(fetched, probe);
+					return fetched;
+				});
+				if (controller.signal.aborted) throw controller.signal.reason;
 				if (tried.length > 1 && lastError?.code === 'EMPTY_FILE') {
 					mediaLog.info(`recovered by ${rung.name} after ${tried.slice(0, -1).join(', ')} came back empty`);
 				}
