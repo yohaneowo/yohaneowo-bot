@@ -2,7 +2,7 @@ const fs = require('node:fs/promises');
 const os = require('node:os');
 const path = require('node:path');
 const { fetchVideo, EmptyFileError } = require('./sites/video');
-const { fetchFacebookPost } = require('./sites/facebook');
+const { fetchFacebookVideo, fetchFacebookPreview } = require('./sites/facebook');
 const { fetchInstagramPost } = require('./sites/instagram');
 const { fetchXiaohongshuNote } = require('./sites/xiaohongshu');
 const { fetchYouTubeShort } = require('./sites/youtube');
@@ -33,7 +33,9 @@ const SUPPORTED_SITES = [
 		name: 'Facebook',
 		pattern:
 			/^https?:\/\/(?:(?:(?:www|m|web|mbasic)\.)?facebook\.com\/(?:share\/(?:[prv]\/)?[\w-]+|[\w.-]+\/posts\/|groups\/[\w.-]+\/(?:posts|permalink)\/|permalink\.php\?|story\.php\?|photo(?:\.php)?\/?\?|[\w.-]+\/photos\/|reel\/\d+|watch\/?\?|[\w.-]+\/videos\/)|fb\.watch\/[\w-]+)/i,
-		fetch: withFallbackChain(fetchFacebookPost, { site: 'Facebook' }),
+		// LinkHub's Cobalt returns another reel's video for some Facebook links (it takes the first video
+		// in the page), so yt-dlp goes first; LinkHub is the second try and the link preview the last.
+		fetch: withFallbackChain(fetchFacebookPreview, { site: 'Facebook', first: fetchFacebookVideo }),
 	},
 	{
 		name: 'Instagram',

@@ -240,18 +240,28 @@ function createFallbackChain({
 	};
 }
 
-// LinkHub first (when configured), then the site's own parser, then (yt-dlp sites only) the
-// parser again with a different strategy after an empty file. Replaces the old withLinkHub().
-function withFallbackChain(local, { site, alt } = {}) {
+// The rungs of one site: LinkHub first (when configured), then the site's own parser, then
+// (yt-dlp sites only) the parser again with a different strategy after an empty file.
+// `first` puts one more rung ahead of LinkHub, for a site where LinkHub is known to return the
+// wrong media (Facebook: Cobalt picks another reel from the page). That rung must fail when it has
+// no video, not settle for a preview, or LinkHub would never get its turn.
+function buildRungs(local, { alt, first } = {}) {
 	const rungs = [
 		{ name: 'linkhub', repair: false, enabled: () => linkhub.isConfigured(), run: linkhub.fetchViaLinkHub },
 		{ name: 'local', repair: false, enabled: () => true, run: local },
 	];
+	if (first) rungs.unshift({ name: 'local-first', repair: false, enabled: () => true, run: first });
 	if (alt) rungs.push({ name: 'local-alt', repair: true, enabled: () => true, run: alt });
-	return createFallbackChain({ site, rungs });
+	return rungs;
+}
+
+// Replaces the old withLinkHub().
+function withFallbackChain(local, { site, alt, first } = {}) {
+	return createFallbackChain({ site, rungs: buildRungs(local, { alt, first }) });
 }
 
 module.exports = {
+	buildRungs,
 	withFallbackChain,
 	createFallbackChain,
 	createRepairState,

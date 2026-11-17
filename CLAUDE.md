@@ -34,7 +34,7 @@
 
 ## 链接解析的退回与重试
 
-`services/media.js` 里每个站点的 fetcher 都包在 `withFallbackChain()`（`services/sites/chain.js`）里：LinkHub → 站点自己的解析 →（YouTube、TikTok、B 站）遇到空影片档时用 yt-dlp 的另一组参数再试一次。**退回只能放在 `chain.js`**，不要在站点代码里另加；次数、时限、熔断与冷却的规则见 `docs/verification.md` 的「空影片自动重试契约」。
+`services/media.js` 里每个站点的 fetcher 都包在 `withFallbackChain()`（`services/sites/chain.js`）里：LinkHub → 站点自己的解析（**Facebook 例外**：本机 yt-dlp 的影片 → LinkHub → 链接预览，因为 LinkHub 的 Cobalt 会取页面里第一个视频，给出别支影片；见 `chain.js` 的 `first`）→（YouTube、TikTok、B 站）遇到空影片档时用 yt-dlp 的另一组参数再试一次。**退回只能放在 `chain.js`**，不要在站点代码里另加；次数、时限、熔断与冷却的规则见 `docs/verification.md` 的「空影片自动重试契约」。
 
 ## 常用指令
 

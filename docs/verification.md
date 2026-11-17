@@ -66,7 +66,7 @@
 
 ### 空影片自动重试契约（`services/sites/chain.js`）
 
-- 一个链接走一条固定的阶梯：LinkHub（设了才走）→ 站点自己的解析 →（只有直接用 yt-dlp 的 YouTube、TikTok、B 站）再用 yt-dlp 的另一组参数跑一次：单档、偏小、不合并，YouTube 另换 `mweb` 客户端。阶梯只走一遍；`chain.js` 是唯一会「退回」的地方，别在别处再加退回。
+- 一个链接走一条固定的阶梯：LinkHub（设了才走）→ 站点自己的解析（Facebook 例外：本机 yt-dlp 影片 → LinkHub → 链接预览，顺序测试在 `test/facebook-order.test.js`）→（只有直接用 yt-dlp 的 YouTube、TikTok、B 站）再用 yt-dlp 的另一组参数跑一次：单档、偏小、不合并，YouTube 另换 `mweb` 客户端。阶梯只走一遍；`chain.js` 是唯一会「退回」的地方，别在别处再加退回。
 - 只有「紧邻的上一层」以 `empty_file`（0 字节、小于 10 KB、ffprobe 读不到长度）失败，才触发新增那一层；空档之后又遇到别的错误（网络、超时……）不再换路，也不会被当成空影片报告。`VIDEO_TOO_LONG`、需要登录、不支持等一律不重试。每一层的结果都要过 0 字节检查，每个影片档再过 ffprobe：读得到长度，而且有视频流（只有音轨的 mp4 不算；没有 ffprobe 就不判断）。这个检查也在时间预算之内：卡住会被取消，预算用完之后才回来的结果不算成功；单一影片另有 10 KB 下限（`fitVideoToLimit`）。
 - 每层在自己的子目录里跑，失败就整个删掉，下一层不会读到上一轮的 `video.*`。
 - 每个链接总时限 4 分钟：第一层一定会跑，之后每一层都要求至少剩 45 秒才开始，不会因为前面用光时间而多给时间；到点时取消 LinkHub 请求、yt-dlp（杀进程）、ffprobe 和 ffmpeg 压缩。不看这个信号的步骤（Facebook、Instagram 的预览请求，X、Threads 自己的请求）靠各自的超时结束。时间用完时报的是超时（通用「解析失败」），不会当成空影片。

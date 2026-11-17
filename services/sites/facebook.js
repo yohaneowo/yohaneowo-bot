@@ -55,4 +55,6 @@ async function fetchFacebookPost(url, dir, maxBytes, onStage) {
 
 module.exports = {
 	fetchFacebookPost,
+	fetchFacebookVideo,
+	fetchFacebookPreview,
 };
