@@ -17,7 +17,7 @@
 
 | 项目            | 结果                                                                                                                                                                                                                                                                            |
 | --------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| 单元测试        | `npm test`（= `node --test "test/*.test.js"`）。2026-11-17 共 85 项：本机（Windows）81 通过、4 项跳过，dev 容器（Linux）85/85 通过。多数不需要 ffmpeg 或网络；`test/ytdlp-stub.test.js` 要 Linux 与 ffmpeg，本机会跳过，要在 dev 容器里跑（见下）                                                                                                                                                                                     |
+| 单元测试        | `npm test`（= `node --test "test/*.test.js"`）。2026-11-17 共 93 项：本机（Windows）88 通过、5 项跳过，dev 容器（Linux）93/93 通过。多数不需要 ffmpeg 或网络；`test/ytdlp-stub.test.js` 要 Linux 与 ffmpeg，本机会跳过，要在 dev 容器里跑（见下）                                                                                                                                                                                     |
 | lint            | `npx eslint .`（`package.json` 没有 lint 的 npm script）。目前无错误。规则是 tab 缩进、`brace-style: stroustrup`                                                                                                                                                                |
 | format check    | `npm run format:check`（= `prettier --check .`）。**目前 54～63 个旧档本来就不通过**（含已通过 ESLint 的新测试档；加 `--end-of-line auto` 仍有 54 个）。`AGENTS.md` 写明 Prettier 与 ESLint 冲突时听 ESLint，所以这条只记录、不当闸门；不要为它 `prettier --write` 重排整个旧档 |
 | Doppler 配置    | 存在 `dev`、`stg`、`prd` 三个配置，`GUILD_ID` 等变数在三者都有；`dev`、`stg` 的 `GUILD_ID` 与 `prd` 不同（只比对了哈希，没有看到值）                                                                                                                                            |
@@ -55,7 +55,7 @@
 | `index.js` 自动处理（MessageCreate）                     | 删原讯息契约（下）                                                                                                        |
 | `services/sites/linkhub.js`                              | `test/linkhub-gif.test.js` 通过：GIF 优先、失败回退 mp4；LinkHub 空档改走本机解析重试一次                                 |
 | slash 指令（`/x`、「解析链接」）                         | 改了指令定义要提醒跑 `npm run deploy:dev`（只注册到测试 bot）；真实入口截图由 Tess／老板在测试 bot 上验，开发者不自己登入 |
-| `services/sites/chain.js`、`deadline.js`、`video.js`（yt-dlp 参数）、`linkhub.js` 下载 | 空影片自动重试契约（下）：`test/fallback-chain.test.js`、`media-post.test.js`、`ytdlp-args.test.js`、`linkhub-multi-item.test.js` 通过，**加上 dev 容器里跑 `test/ytdlp-stub.test.js` 的输出**（假 yt-dlp 的独立子进程测试） |
+| `services/sites/chain.js`、`deadline.js`、`video.js`（yt-dlp 参数）、`linkhub.js` 下载 | 空影片自动重试契约（下）：`test/fallback-chain.test.js`、`media-post.test.js`、`ytdlp-args.test.js`、`linkhub-multi-item.test.js`、`line-busy.test.js` 通过，**加上 dev 容器里跑 `test/ytdlp-stub.test.js` 的输出**（假 yt-dlp 的独立子进程测试） |
 
 ### 空影片契约（`test/empty-file.test.js` 已覆盖）
 
@@ -67,13 +67,13 @@
 ### 空影片自动重试契约（`services/sites/chain.js`）
 
 - 一个链接走一条固定的阶梯：LinkHub（设了才走）→ 站点自己的解析 →（只有直接用 yt-dlp 的 YouTube、TikTok、B 站）再用 yt-dlp 的另一组参数跑一次：单档、偏小、不合并，YouTube 另换 `mweb` 客户端。阶梯只走一遍；`chain.js` 是唯一会「退回」的地方，别在别处再加退回。
-- 只有 `empty_file`（0 字节、小于 10 KB、ffprobe 读不到长度）才触发新增那一层；`VIDEO_TOO_LONG`、需要登录、不支持等一律不重试。每一层的结果都要过 0 字节检查，影片再过 10 KB／ffprobe 检查。
+- 只有「紧邻的上一层」以 `empty_file`（0 字节、小于 10 KB、ffprobe 读不到长度）失败，才触发新增那一层；空档之后又遇到别的错误（网络、超时……）不再换路，也不会被当成空影片报告。`VIDEO_TOO_LONG`、需要登录、不支持等一律不重试。每一层的结果都要过 0 字节检查，每个影片档再过 ffprobe 读长度（没有 ffprobe 就不判断）；单一影片另有 10 KB 下限（`fitVideoToLimit`）。
 - 每层在自己的子目录里跑，失败就整个删掉，下一层不会读到上一轮的 `video.*`。
-- 每个链接总时限 4 分钟：新增那一层要求至少剩 45 秒，LinkHub 和站点自己的解析至少保证 60 秒；到点时取消 LinkHub 请求、yt-dlp（杀进程）和 ffprobe。**ffmpeg 压缩不被取消**（它有自己的 5 分钟上限）。
-- 另一个下载名额也被占满时不跑新增层（`mediaPost.js` 把名额数告诉 `chain.js`）。
-- 站点熔断：同一站点 10 分钟内整条阶梯失败 2 次 → 之后 10 分钟不跑新增层；成功就重置。同一网址整条阶梯失败后 5 分钟内再贴，直接回「刚刚下载失败」，不再重跑；成功就解除。都在记忆体里，重启清零。
+- 每个链接总时限 4 分钟：第一层一定会跑，之后每一层都要求至少剩 45 秒才开始，不会因为前面用光时间而多给时间；到点时取消 LinkHub 请求、yt-dlp（杀进程）、ffprobe 和 ffmpeg 压缩。不看这个信号的步骤（Facebook、Instagram 的预览请求，X、Threads 自己的请求）靠各自的超时结束。时间用完时报的是超时（通用「解析失败」），不会当成空影片。
+- 另一个下载名额也被占满时不跑新增层（Discord 由 `mediaPost.js`、LINE 由 `line.js` 各自把自己的名额数告诉 `chain.js`）。
+- 站点熔断：同一站点 10 分钟内整条阶梯失败 2 次 → 之后 10 分钟不跑新增层；成功就重置。同一网址整条阶梯失败后 5 分钟内再贴，直接回「刚刚下载失败」，不再重跑；成功就解除。都在记忆体里，重启清零。 新增层因忙、熔断或没时间而被跳过时，阶梯没走完，这次失败**不计入**站点计数、也不开启链接冷却（用户可以马上再试）。
 - 全部失败：状态显示失败、`postMedia` 回 `false`（原讯息不会被删）、`reportParse` 记 `failed`，`error_message` 形如 `empty_file: tried=local,local-alt; site_consecutive=1; …`。
-- **已知取舍**：Facebook、Instagram 遇到空影片会静默改发预览封面，不进新增层；X、Threads、小红书各有自己的解析，也没有新增层。`mweb` 客户端是 2026-11 在 yt-dlp 2026.10.26 上实测可用（`android_vr` 能列格式但下载失败），**升级 yt-dlp 后要重验**。
+- **已知取舍**：Facebook、Instagram 遇到空影片会静默改发预览封面，不进新增层；X、Threads、小红书各有自己的解析，也没有新增层（但它们的多媒体贴文里的影片现在也会被 ffprobe 检查，读不到长度就换到下一层）。`mweb` 客户端是 2026-11 在 yt-dlp 2026.10.26 上实测可用（`android_vr` 能列格式但下载失败），**升级 yt-dlp 后要重验**。
 
 ### 在 dev 容器里跑整套测试（含假 yt-dlp 集成测试）
 

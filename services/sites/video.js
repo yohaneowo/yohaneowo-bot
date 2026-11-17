@@ -227,7 +227,7 @@ async function compressToFit(inputPath, outputPath, durationSeconds, maxBytes) {
 				'-movflags', '+faststart',
 				outputPath,
 			],
-			{ timeout: COMPRESS_TIMEOUT_MS },
+			{ timeout: COMPRESS_TIMEOUT_MS, ...(currentSignal() ? { signal: currentSignal() } : {}) },
 		);
 
 		const { size } = await fs.stat(outputPath);

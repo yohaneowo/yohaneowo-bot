@@ -3,6 +3,7 @@
 const express = require('express');
 const { middleware, messagingApi, HTTPFetchError } = require('@line/bot-sdk');
 const { extractMediaUrls, downloadMedia, findSupportedSite } = require('./services/media');
+const { setBusyProbe } = require('./services/sites/chain');
 const { PUBLIC_MEDIA_DIR, publishFiles, startMediaCleanup } = require('./services/publicMedia');
 const {
 	reportJoin,
@@ -36,6 +37,9 @@ const MAX_TEXT_LENGTH = 1500;
 
 const client = new messagingApi.MessagingApiClient({ channelAccessToken });
 let activeJobs = 0;
+// Tells the retry logic (chain.js) when both job slots are taken, so a failing link doesn't keep a
+// slot busy with extra attempts while other links wait. (The Discord bot does the same in mediaPost.js.)
+setBusyProbe(() => activeJobs >= MAX_CONCURRENT_JOBS);
 // LINE display names for the parse log, cached so each user costs one profile lookup.
 const userNames = new Map();
 

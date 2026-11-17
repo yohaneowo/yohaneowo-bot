@@ -1,7 +1,7 @@
 const fs = require('node:fs/promises');
 const path = require('node:path');
 const { UserFacingError } = require('./errors');
-const { EmptyFileError } = require('./video');
+const { EmptyFileError, probeVideo } = require('./video');
 const { DeadlineError, runWithSignal } = require('./deadline');
 const linkhub = require('./linkhub');
 const { mediaLog } = require('../mediaLog');
@@ -9,20 +9,21 @@ const { mediaLog } = require('../mediaLog');
 // One link is fetched through a short ladder of "rungs": LinkHub first (when configured), the
 // site's own parser next, and for yt-dlp sites one more run with a different strategy (single
 // file, smaller format, another YouTube client). A rung is tried only when the one before it
-// failed, and the extra rung only after an empty or unreadable file ("empty_file"); every other
-// failure (too long, login wall, unsupported ...) is final, since repeating it changes nothing.
+// failed, and the extra rung only when the rung just before it came back with an empty or
+// unreadable file ("empty_file"); every other failure (too long, login wall, unsupported ...) is
+// final, since repeating it changes nothing.
 //
 // Bounds, so repairing can never loop or starve the two download slots:
 // - the ladder is a fixed array walked once, and this is the only place that falls back;
-// - the link has one time budget; the extra rung needs MIN_REMAINING_MS of it left, and every
-//   slow step is cancelled when its rung's share is spent;
+// - the link has one time budget (TOTAL_BUDGET_MS); no rung after the first starts with less than
+//   MIN_REMAINING_MS left, and when the budget is spent the slow steps (LinkHub requests, yt-dlp,
+//   ffprobe, ffmpeg) are cancelled;
 // - the extra rung is skipped while the other download slot is busy;
 // - a site whose whole ladder keeps coming back empty pauses the extra rung for a while, and a link
-//   that just failed completely is not retried for a few minutes.
+//   that just failed completely is not retried for a few minutes. Only a ladder that was really
+//   walked to its end counts: if the extra rung was skipped (busy, breaker, no time), nothing is
+//   recorded, so a skipped retry never locks the user out.
 const TOTAL_BUDGET_MS = 4 * 60 * 1000;
-// A rung that must run (LinkHub, the site's own parser) gets at least this long even when the
-// earlier rungs used up the budget.
-const BASE_RUNG_MIN_MS = 60 * 1000;
 const MIN_REMAINING_MS = 45 * 1000;
 const BREAKER_WINDOW_MS = 10 * 60 * 1000;
 const BREAKER_FAILURES = 2;
@@ -117,11 +118,21 @@ function isFinalError(error) {
 	return error.code === 'VIDEO_TOO_LONG' || (error instanceof UserFacingError && error.code !== 'EMPTY_FILE');
 }
 
-// A rung can return files that were never size-checked (every site but the single-video path).
-async function assertNoEmptyFiles(result) {
+const VIDEO_FILE = /\.(?:mp4|m4v|mov|webm|mkv)$/i;
+
+// A rung can return files nobody has looked at yet (every site but the single-video path, e.g. the
+// videos of a post with several media): none may be empty, and a video must have a readable length.
+// Without ffprobe there is nothing to judge, so such a file is accepted.
+async function assertUsableResult(result, probe) {
 	for (const file of result.files ?? []) {
 		const { size } = await fs.stat(file.path);
 		if (size === 0) throw new EmptyFileError(`${file.name} is 0 bytes`);
+		if (!VIDEO_FILE.test(file.path)) continue;
+		const info = await probe(file.path);
+		if (info?.unavailable) continue;
+		if (!info || !(info.duration > 0)) {
+			throw new EmptyFileError(`${file.name} has no readable duration (${size} bytes)`);
+		}
 	}
 }
 
@@ -133,9 +144,9 @@ function createFallbackChain({
 	state = defaultState,
 	now = Date.now,
 	totalMs = TOTAL_BUDGET_MS,
-	baseRungMinMs = BASE_RUNG_MIN_MS,
 	minRemainingMs = MIN_REMAINING_MS,
 	isBusy = () => busyProbe(),
+	probe = probeVideo,
 }) {
 	return async function runChain(url, dir, maxBytes, onStage) {
 		const key = normalizeUrlKey(url);
@@ -146,41 +157,45 @@ function createFallbackChain({
 			throw error;
 		}
 
-		const startedAt = now();
-		const budgetEnd = startedAt + totalMs;
+		const budgetEnd = now() + totalMs;
 		const tried = [];
-		let sawEmpty = false;
-		let emptyDetail = '';
+		// Set when a rung was left out for lack of slots, time or the breaker: the ladder was not
+		// walked to its end, so a failure must not count against the site or the link.
+		let incomplete = false;
 		let lastError = null;
 
 		for (const rung of rungs) {
 			if (!rung.enabled()) continue;
 			if (rung.repair) {
-				if (!sawEmpty) continue;
-				const remaining = budgetEnd - now();
+				// Only straight after an empty file; a network error or a login wall says nothing about the file.
+				if (lastError?.code !== 'EMPTY_FILE') continue;
 				const skip =
 					(state.isBreakerOpen(site) && 'breaker open for this site') ||
-					(isBusy() && 'the other download slot is busy') ||
-					(remaining < minRemainingMs && `only ${Math.round(remaining / 1000)}s of the time budget left`);
+					(isBusy() && 'the other download slot is busy');
 				if (skip) {
 					mediaLog.warn(`skipping ${rung.name}: ${skip}`);
+					incomplete = true;
 					continue;
 				}
-				onStage?.('retrying');
 			}
+			const remaining = budgetEnd - now();
+			if (tried.length > 0 && remaining < minRemainingMs) {
+				mediaLog.warn(`not starting ${rung.name}: only ${Math.max(0, Math.round(remaining / 1000))}s of the time budget left`);
+				incomplete = true;
+				break;
+			}
+			if (rung.repair) onStage?.('retrying');
 
 			tried.push(rung.name);
 			const rungDir = path.join(dir, `rung-${tried.length}`);
 			await fs.mkdir(rungDir, { recursive: true });
-			// A repair rung may not outlive the budget; a base rung always gets a minimum.
-			const rungEnd = rung.repair ? budgetEnd : Math.max(budgetEnd, now() + baseRungMinMs);
 			const controller = new AbortController();
-			const timer = setTimeout(() => controller.abort(new DeadlineError(rung.name)), Math.max(0, rungEnd - now()));
+			const timer = setTimeout(() => controller.abort(new DeadlineError(rung.name)), Math.max(0, budgetEnd - now()));
 			const rungStartedAt = now();
 			try {
 				const result = await runWithSignal(controller.signal, () => rung.run(url, rungDir, maxBytes, onStage));
-				await assertNoEmptyFiles(result);
-				if (sawEmpty) {
+				await assertUsableResult(result, probe);
+				if (tried.length > 1 && lastError?.code === 'EMPTY_FILE') {
 					mediaLog.info(`recovered by ${rung.name} after ${tried.slice(0, -1).join(', ')} came back empty`);
 				}
 				state.recordSuccess(site, key);
@@ -189,10 +204,6 @@ function createFallbackChain({
 			catch (error) {
 				await fs.rm(rungDir, { recursive: true, force: true });
 				lastError = controller.signal.aborted ? controller.signal.reason : error;
-				if (lastError.code === 'EMPTY_FILE') {
-					sawEmpty = true;
-					emptyDetail = lastError.detail ?? lastError.message;
-				}
 				mediaLog.warn(
 					`${rung.name} failed after ${((now() - rungStartedAt) / 1000).toFixed(1)}s: ${lastError.message}`,
 				);
@@ -203,15 +214,20 @@ function createFallbackChain({
 			}
 		}
 
-		if (!sawEmpty) throw lastError;
+		// Anything but an empty file at the end (timeout, network error, ...) is reported as what it is.
+		if (!lastError) throw new Error('no route is available for this link');
+		if (lastError.code !== 'EMPTY_FILE') throw lastError;
 
-		const count = state.recordFailure(site, key);
-		const open = state.isBreakerOpen(site);
+		const count = incomplete ? state.consecutiveFailures(site) : state.recordFailure(site, key);
 		mediaLog.warn(
-			`${site}: every route came back empty (${tried.join(' > ')}); ${count} in a row for this site` +
-				`${open ? '; the extra retry is paused for it' : ''}`,
+			incomplete
+				? `${site}: empty file and the retry was not possible (${tried.join(' > ')}); nothing recorded`
+				: `${site}: every route came back empty (${tried.join(' > ')}); ${count} in a row for this site` +
+					`${state.isBreakerOpen(site) ? '; the extra retry is paused for it' : ''}`,
 		);
-		const error = new EmptyFileError(`tried=${tried.join(',')}; site_consecutive=${count}; ${emptyDetail}`);
+		const error = new EmptyFileError(
+			`tried=${tried.join(',')}; site_consecutive=${count}${incomplete ? '; retry skipped' : ''}; ${lastError.detail ?? lastError.message}`,
+		);
 		error.tried = tried;
 		throw error;
 	};

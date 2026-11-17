@@ -71,6 +71,9 @@ const throwEmpty = () => {
 	throw new EmptyFileError('simulated empty download');
 };
 
+// The fake files are not real videos: ffprobe is replaced by a probe that reads them as 2 seconds long.
+const readable = async () => ({ duration: 2 });
+
 function chainOf(rungs, options = {}) {
 	return createFallbackChain({
 		site: 'YouTube',
@@ -78,6 +81,7 @@ function chainOf(rungs, options = {}) {
 		state: createRepairState(clock),
 		now: clock,
 		isBusy: () => false,
+		probe: readable,
 		...options,
 	});
 }
@@ -199,81 +203,122 @@ test('LINE calls the chain without onStage: the extra rung still works', async (
 	assert.equal(repair.calls, 1);
 });
 
-test('a rung that outlives its time budget is cancelled, then the chain moves on', async () => {
-	let sawAbort = false;
-	const hang = rung('hang', () => new Promise((resolve, reject) => {
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+// A rung that never finishes and only ends when the link's time budget cancels it.
+function hangingRung(name, onAbort = () => undefined) {
+	return rung(name, () => new Promise((resolve, reject) => {
 		const signal = currentSignal();
 		assert.ok(signal, 'the rung runs with a budget signal');
 		signal.addEventListener('abort', () => {
-			sawAbort = true;
+			onAbort();
 			reject(signal.reason);
 		});
 	}));
+}
+
+test('a rung that outlives the total time budget is cancelled, and nothing new starts afterwards', async () => {
+	let sawAbort = false;
+	const hang = hangingRung('hang', () => {
+		sawAbort = true;
+	});
 	const next = rung('local', good);
 	const started = Date.now();
-	const chain = createFallbackChain({
-		site: 'YouTube',
-		rungs: [hang, next],
-		state: createRepairState(),
-		totalMs: 40,
-		baseRungMinMs: 0,
-		isBusy: () => false,
-	});
-	const result = await chain(URL_A, dir, MAX);
+	const chain = chainOf([hang, next], { now: Date.now, totalMs: 40 });
+	await assert.rejects(chain(URL_A, dir, MAX), (error) => error.code === 'MEDIA_TIMEOUT');
 
 	assert.equal(sawAbort, true);
 	assert.ok(Date.now() - started < 2000, 'cancelled by the budget, not by waiting for the rung');
-	assert.equal(result.files.length, 1);
+	assert.equal(next.calls, 0, 'the budget is spent: no further rung, not even a base one');
 });
 
-test('when only a hung rung is left, the failure is a timeout error', async () => {
-	const hang = rung('hang', () => new Promise((resolve, reject) => {
-		const signal = currentSignal();
-		signal.addEventListener('abort', () => reject(signal.reason));
-	}));
-	const chain = createFallbackChain({
-		site: 'YouTube',
-		rungs: [hang],
-		state: createRepairState(),
-		totalMs: 30,
-		baseRungMinMs: 0,
-		isBusy: () => false,
-	});
+test('when only a hung rung is left, the failure is a timeout, not an empty-file error', async () => {
+	const chain = chainOf([hangingRung('hang')], { now: Date.now, totalMs: 30 });
 	await assert.rejects(chain(URL_A, dir, MAX), (error) => error.code === 'MEDIA_TIMEOUT');
 });
 
-test('a base rung still gets its minimum time when earlier rungs used the whole budget', async () => {
-	let budgetLeftMs = null;
+test('the first rung always starts; a later rung is not started when too little of the budget is left', async () => {
 	const slow = rung('linkhub', async () => {
-		await new Promise((resolve) => setTimeout(resolve, 60));
+		await sleep(60);
 		throw new Error('LinkHub failed late');
 	});
-	const next = rung('local', async (d) => {
-		const signal = currentSignal();
-		// Work for a while: with no minimum the spent budget would cancel this rung meanwhile.
-		await new Promise((resolve) => setTimeout(resolve, 40));
-		budgetLeftMs = signal.aborted ? 0 : 1;
-		return good(d);
-	});
-	const chain = createFallbackChain({
-		site: 'YouTube',
-		rungs: [slow, next],
-		state: createRepairState(),
-		totalMs: 20,
-		baseRungMinMs: 5000,
-		isBusy: () => false,
-	});
-	const result = await chain(URL_A, dir, MAX);
-	assert.equal(budgetLeftMs, 1, 'the local rung was not already cancelled');
-	assert.equal(result.files.length, 1);
+	const next = rung('local', good);
+	const chain = chainOf([slow, next], { now: Date.now, totalMs: 20, minRemainingMs: 1000 });
+	// The rung ignores the cancellation for 60 ms, but the budget ran out meanwhile: a timeout.
+	await assert.rejects(chain(URL_A, dir, MAX), (error) => error.code === 'MEDIA_TIMEOUT');
+	assert.equal(slow.calls, 1, 'the first rung ran although the budget was tiny');
+	assert.equal(next.calls, 0, 'the budget was spent: no new rung, and no extra 60 seconds for it');
 });
 
-test('the extra rung is skipped when too little of the time budget is left', async () => {
+test('the extra rung only follows an empty file, not a plain failure that comes after one', async () => {
+	const empty = rung('linkhub', throwEmpty);
+	const plain = rung('local', () => {
+		throw new Error('yt-dlp exited with code 1');
+	});
+	const repair = rung('local-alt', good, { repair: true });
+	await assert.rejects(chainOf([empty, plain, repair])(URL_A, dir, MAX), (error) => {
+		assert.equal(error.code, undefined, 'reported as the plain failure it is');
+		assert.match(error.message, /yt-dlp exited with code 1/);
+		return true;
+	});
+	assert.equal(repair.calls, 0);
+});
+
+test('a timeout after an empty file is reported as a timeout and is not held against the site or the link', async () => {
+	const state = createRepairState(Date.now);
+	const empty = rung('linkhub', throwEmpty);
+	const chain = chainOf([empty, hangingRung('local')], {
+		state,
+		now: Date.now,
+		totalMs: 60,
+		minRemainingMs: 0,
+	});
+	await assert.rejects(chain(URL_A, dir, MAX), (error) => error.code === 'MEDIA_TIMEOUT');
+	assert.equal(state.consecutiveFailures('YouTube'), 0);
+	assert.equal(state.isCoolingDown(normalizeUrlKey(URL_A)), false);
+});
+
+test('the extra rung is skipped when too little of the time budget is left, and that is not recorded as a failure', async () => {
+	const state = createRepairState(clock);
 	const first = rung('local', throwEmpty);
 	const repair = rung('local-alt', good, { repair: true });
-	const chain = chainOf([first, repair], { totalMs: 100, minRemainingMs: 1000 });
-	await assert.rejects(chain(URL_A, dir, MAX), (error) => error.code === 'EMPTY_FILE');
+	const chain = chainOf([first, repair], { state, totalMs: 100, minRemainingMs: 1000 });
+
+	await assert.rejects(chain(URL_A, dir, MAX), (error) => {
+		assert.equal(error.code, 'EMPTY_FILE');
+		assert.match(error.detail, /retry skipped/);
+		return true;
+	});
 	assert.equal(repair.calls, 0);
+	assert.equal(state.consecutiveFailures('YouTube'), 0);
+	await assert.rejects(chain(URL_A, dir, MAX), (error) => error.code === 'EMPTY_FILE');
+	assert.equal(first.calls, 2, 'no cooldown: the same link may be tried again right away');
+});
+
+test('every video in a result must have a readable length; images are not probed; no ffprobe means no judgement', async () => {
+	const probed = [];
+	const probe = async (file) => {
+		probed.push(path.basename(file));
+		return file.includes('rung-1') ? null : { duration: 3 };
+	};
+	const first = rung('linkhub', (d) => ({
+		files: [fileResult(d, 'image-1.jpg', 3000), fileResult(d, 'video-2.mp4', 30000)],
+		author: '',
+		text: '',
+	}));
+	const second = rung('local', (d) => ({
+		files: [fileResult(d, 'image-1.jpg', 3000), fileResult(d, 'video-2.mp4', 30000)],
+		author: '',
+		text: '',
+	}));
+	const result = await chainOf([first, second], { probe })(URL_A, dir, MAX);
+	assert.equal(result.files.length, 2);
+	assert.equal(first.calls + second.calls, 2, 'the unreadable video made the first rung fail');
+	assert.deepEqual(probed, ['video-2.mp4', 'video-2.mp4'], 'only the videos are probed');
+
+	const third = rung('local', good);
+	const unavailable = await chainOf([third], { probe: async () => ({ unavailable: true }) })(URL_B, dir, MAX);
+	assert.equal(unavailable.files.length, 1, 'without ffprobe the file is accepted');
 });
 
 test('the extra rung is skipped while the other download slot is busy, and runs when it is free', async () => {
@@ -289,6 +334,37 @@ test('the extra rung is skipped while the other download slot is busy, and runs 
 	const result = await chain(URL_B, dir, MAX);
 	assert.equal(result.files.length, 1);
 	assert.equal(repair.calls, 1);
+});
+
+test('a retry skipped because the other slot is busy is not recorded: no cooldown, no failure count', async () => {
+	const state = createRepairState(clock);
+	const base = rung('local', throwEmpty);
+	const repair = rung('local-alt', good, { repair: true });
+	const chain = chainOf([base, repair], { state, isBusy: () => true });
+
+	await assert.rejects(chain(URL_A, dir, MAX), (error) => /retry skipped/.test(error.detail));
+	await assert.rejects(chain(URL_A, dir, MAX), (error) => /retry skipped/.test(error.detail));
+	assert.equal(base.calls, 2, 'the same link was tried again at once: nothing locked it out');
+	assert.equal(repair.calls, 0);
+	assert.equal(state.consecutiveFailures('YouTube'), 0);
+	assert.equal(state.isBreakerOpen('YouTube'), false);
+});
+
+test('while the breaker is open a skipped retry does not extend it or start a link cooldown', async () => {
+	const state = createRepairState(clock);
+	const base = rung('local', throwEmpty);
+	const repair = rung('local-alt', throwEmpty, { repair: true });
+	const chain = chainOf([base, repair], { state });
+
+	await assert.rejects(chain(URL_A, dir, MAX));
+	await assert.rejects(chain(URL_B, dir, MAX));
+	assert.equal(state.isBreakerOpen('YouTube'), true);
+	assert.equal(state.consecutiveFailures('YouTube'), 2);
+
+	await assert.rejects(chain(URL_C, dir, MAX), (error) => /retry skipped/.test(error.detail));
+	assert.equal(state.consecutiveFailures('YouTube'), 2, 'the skipped attempt was not counted');
+	assert.equal(state.isCoolingDown(normalizeUrlKey(URL_C)), false);
+	assert.equal(state.isCoolingDown(normalizeUrlKey(URL_A)), true, 'the fully failed links stay on cooldown');
 });
 
 test('two complete failures pause the extra rung for the site; it resumes after the window or a success', async () => {

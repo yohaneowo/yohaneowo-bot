@@ -116,7 +116,9 @@ function ladder(counter) {
 				},
 			},
 		],
-		// isBusy left at its default: the probe that mediaPost.js installed.
+		// The files above are not real videos, so ffprobe is replaced; isBusy stays at its default:
+		// the probe that mediaPost.js installed.
+		probe: async () => ({ duration: 2 }),
 	});
 }
 

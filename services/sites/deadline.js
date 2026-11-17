@@ -1,10 +1,10 @@
 const { AsyncLocalStorage } = require('node:async_hooks');
 
-// The time budget of one rung of one link. chain.js runs every rung inside runWithSignal(), and the
-// slow steps (LinkHub requests, yt-dlp, ffprobe) read the signal through currentSignal() /
+// The time budget of one link. chain.js runs every rung inside runWithSignal(), and the slow steps
+// (LinkHub requests, yt-dlp, ffprobe, ffmpeg) read the signal through currentSignal() /
 // timeoutSignal(), so a spent budget really stops them without threading a parameter through every
-// site fetcher. ffmpeg compression deliberately ignores it (it has its own timeout and a finished
-// download is worth compressing).
+// site fetcher. Steps that never look at it (the link-preview fetches of Facebook and Instagram,
+// X's and Threads' own requests) keep their own timeouts and end the rung on their own.
 const storage = new AsyncLocalStorage();
 
 class DeadlineError extends Error {

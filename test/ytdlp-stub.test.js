@@ -100,6 +100,26 @@ test('a yt-dlp that hangs is killed when the rung time budget is spent', { skip 
 	assert.equal(outcome.childAlive, false, 'the yt-dlp process is gone');
 });
 
+test('an ffmpeg compression that hangs is killed when the link time budget is spent', { skip }, () => {
+	const hang = path.join(tmp, 'ffmpeg');
+	fs.copyFileSync(path.join(__dirname, 'helpers', 'hang.js'), hang);
+	fs.chmodSync(hang, 0o755);
+	const env = { ...process.env, FFMPEG_PATH: hang, STUB_PID_FILE: path.join(tmp, 'ffmpeg.pid') };
+	const child = spawnSync(process.execPath, [path.join(__dirname, 'helpers', 'cancel-ffmpeg-driver.js')], {
+		env,
+		encoding: 'utf8',
+		timeout: 30_000,
+	});
+	const line = child.stdout.split('\n').find((text) => text.startsWith('DRIVER_RESULT '));
+	assert.ok(line, `driver printed no result. stderr: ${child.stderr}`);
+	const outcome = JSON.parse(line.slice('DRIVER_RESULT '.length));
+	assert.equal(outcome.rejected, true);
+	assert.notEqual(outcome.code, 'VIDEO_TOO_LONG', 'ffmpeg was really started, not skipped for being too long');
+	assert.ok(outcome.elapsed < 3000, `stopped by the budget after ${outcome.elapsed} ms, not by ffmpeg's own 5 minute timeout`);
+	assert.equal(outcome.childAlive, false, 'the ffmpeg process is gone');
+	assert.ok(fs.existsSync(path.join(tmp, 'ffmpeg.pid')), 'the stub really ran');
+});
+
 test('when every download is empty it gives up after the planned attempts and reports empty_file', { skip }, () => {
 	const { result, calls } = runDriver(99);
 	assert.equal(result.ok, false);
