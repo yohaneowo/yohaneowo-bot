@@ -1,5 +1,6 @@
 const { downloadMedia, findSupportedSite } = require('./media');
 const { reportParse, withLogSite } = require('./adminApi');
+const { setBusyProbe } = require('./sites/chain');
 
 const MAX_CONCURRENT_DOWNLOADS = 2;
 const DEFAULT_UPLOAD_LIMIT_MB = 10;
@@ -7,9 +8,13 @@ const INITIAL_STATUS = '🔍 收到链接，解析中…';
 const STAGE_TEXT = {
 	downloading: '⬇️ 下载中…',
 	compressing: '🗜️ 影片超过上传上限，压缩中…',
+	retrying: '🔁 换个方式再试…',
 };
 
 let activeDownloads = 0;
+// Tells the retry logic (chain.js) when both download slots are taken, so a failing link doesn't
+// keep a slot busy with extra attempts while other links are waiting.
+setBusyProbe(() => activeDownloads >= MAX_CONCURRENT_DOWNLOADS);
 
 function isMediaQueueFull() {
 	return activeDownloads >= MAX_CONCURRENT_DOWNLOADS;

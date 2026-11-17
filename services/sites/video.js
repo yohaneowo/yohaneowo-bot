@@ -3,6 +3,7 @@ const path = require('node:path');
 const { execFile, spawn } = require('node:child_process');
 const { promisify } = require('node:util');
 const { UserFacingError } = require('./errors');
+const { currentSignal } = require('./deadline');
 const { mediaLog, formatMb } = require('../mediaLog');
 
 const execFileAsync = promisify(execFile);
@@ -41,8 +42,51 @@ function buildFormatSelector(maxBytes) {
 	].join('/');
 }
 
+// The retry rung (see chain.js) asks yt-dlp for a single, smaller file instead of a video + audio
+// pair merged by ffmpeg, which also takes the merge step out of the picture. For YouTube it also
+// switches client: in 2026-11 `mweb` returned the same 360p single file as the default client,
+// `android_vr` listed it but failed to download, and `tv` / `ios` / `web_safari` gave no usable
+// format. Re-check these when yt-dlp is upgraded.
+const ALT_YOUTUBE_CLIENT = 'mweb';
+
+function buildAltFormatSelector(maxBytes) {
+	return [
+		`b[ext=mp4][filesize<${maxBytes}]`,
+		`b[ext=mp4][filesize_approx<${maxBytes}]`,
+		`b[filesize<${maxBytes}]`,
+		`b[filesize_approx<${maxBytes}]`,
+		'b[ext=mp4]',
+		'b',
+	].join('/');
+}
+
+function isYouTubeUrl(url) {
+	return /^https?:\/\/(?:[\w-]+\.)?(?:youtube\.com|youtu\.be)\//i.test(url);
+}
+
+// strategy: 'default' or 'alt' (the retry rung).
+function buildYtDlpArgs({ url, dir, maxBytes, strategy = 'default' }) {
+	const alt = strategy === 'alt';
+	const args = [
+		'--no-playlist',
+		'--no-warnings',
+		'--dump-json',
+		'--no-simulate',
+		'-f', alt ? buildAltFormatSelector(maxBytes) : buildFormatSelector(maxBytes),
+		'-S', alt ? 'res:480,br' : 'res,br',
+		'--merge-output-format', 'mp4',
+		// YouTube needs a JS runtime; reuse the Node binary running this bot.
+		'--js-runtimes', `node:${process.execPath}`,
+	];
+	if (alt && isYouTubeUrl(url)) args.push('--extractor-args', `youtube:player_client=${ALT_YOUTUBE_CLIENT}`);
+	if (process.env.FFMPEG_PATH) args.push('--ffmpeg-location', FFMPEG_PATH);
+	args.push('-o', path.join(dir, 'video.%(ext)s'), '--', url);
+	return args;
+}
+
 // Runs yt-dlp with --dump-json --no-simulate. It prints the info JSON once extraction is done
 // and before the download starts, so onExtracted fires at the parse -> download transition.
+// The process is killed when the rung's time budget runs out (deadline.js).
 function runYtDlp(args, onExtracted) {
 	return new Promise((resolve, reject) => {
 		const child = spawn(YTDLP_PATH, args, { windowsHide: true });
@@ -50,6 +94,10 @@ function runYtDlp(args, onExtracted) {
 		let stderr = '';
 		let extracted = false;
 		const timer = setTimeout(() => child.kill(), DOWNLOAD_TIMEOUT_MS);
+		const budget = currentSignal();
+		const onAbort = () => child.kill();
+		if (budget?.aborted) onAbort();
+		else budget?.addEventListener('abort', onAbort, { once: true });
 
 		child.stdout.on('data', (chunk) => {
 			stdout += chunk;
@@ -63,10 +111,16 @@ function runYtDlp(args, onExtracted) {
 		});
 		child.on('error', (error) => {
 			clearTimeout(timer);
+			budget?.removeEventListener('abort', onAbort);
 			reject(error);
 		});
 		child.on('close', (code, signal) => {
 			clearTimeout(timer);
+			budget?.removeEventListener('abort', onAbort);
+			if (budget?.aborted) {
+				reject(budget.reason ?? new Error('yt-dlp stopped: time budget spent'));
+				return;
+			}
 			if (code === 0) {
 				resolve(stdout);
 				return;
@@ -89,6 +143,7 @@ async function findDownloadedFile(dir) {
 // Reads resolution, codec and duration from the file itself: sites often report none of them
 // (Instagram has no duration, Facebook's hd format no resolution). Resolves to null on failure.
 async function probeVideo(filePath) {
+	const budget = currentSignal();
 	try {
 		const { stdout } = await execFileAsync(
 			FFPROBE_PATH,
@@ -99,7 +154,7 @@ async function probeVideo(filePath) {
 				'-of', 'json',
 				filePath,
 			],
-			{ timeout: 30 * 1000 },
+			{ timeout: 30 * 1000, ...(budget ? { signal: budget } : {}) },
 		);
 		const { streams, format } = JSON.parse(stdout);
 		return {
@@ -110,6 +165,8 @@ async function probeVideo(filePath) {
 		};
 	}
 	catch (error) {
+		// A spent time budget says nothing about the file either; let the rung fail as a timeout.
+		if (budget?.aborted) throw error;
 		mediaLog.warn(`ffprobe failed: ${error.message}`);
 		// A missing binary says nothing about the file, so don't treat it as a broken download.
 		return error.code === 'ENOENT' ? { unavailable: true } : null;
@@ -209,24 +266,12 @@ async function fitVideoToLimit(filePath, dir, maxBytes, onStage, knownDuration, 
 
 // Downloads a video with yt-dlp into dir, compressing it when it exceeds maxBytes.
 // onStage is called with 'downloading' and (if needed) 'compressing' as the work progresses.
-async function fetchVideo(url, dir, maxBytes, onStage) {
-	mediaLog.info('running yt-dlp');
+// options.strategy: 'alt' is the retry rung's different yt-dlp settings (see buildYtDlpArgs).
+async function fetchVideo(url, dir, maxBytes, onStage, options = {}) {
+	const strategy = options.strategy ?? 'default';
+	mediaLog.info(strategy === 'alt' ? 'running yt-dlp (alternative strategy)' : 'running yt-dlp');
 	const stdout = await runYtDlp(
-		[
-			'--no-playlist',
-			'--no-warnings',
-			'--dump-json',
-			'--no-simulate',
-			'-f', buildFormatSelector(maxBytes),
-			'-S', 'res,br',
-			'--merge-output-format', 'mp4',
-			// YouTube needs a JS runtime; reuse the Node binary running this bot.
-			'--js-runtimes', `node:${process.execPath}`,
-			...(process.env.FFMPEG_PATH ? ['--ffmpeg-location', FFMPEG_PATH] : []),
-			'-o', path.join(dir, 'video.%(ext)s'),
-			'--',
-			url,
-		],
+		buildYtDlpArgs({ url, dir, maxBytes, strategy }),
 		() => {
 			mediaLog.info('yt-dlp extracted, downloading');
 			onStage?.('downloading');
@@ -260,4 +305,8 @@ module.exports = {
 	MIN_VIDEO_BYTES,
 	fetchVideo,
 	fitVideoToLimit,
+	probeVideo,
+	assertUsableVideo,
+	buildYtDlpArgs,
+	buildAltFormatSelector,
 };

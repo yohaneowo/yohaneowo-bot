@@ -8,64 +8,70 @@ const { fetchXiaohongshuNote } = require('./sites/xiaohongshu');
 const { fetchYouTubeShort } = require('./sites/youtube');
 const { fetchThreadsPost } = require('./sites/threads');
 const { fetchXPost } = require('./sites/x');
-const { withLinkHub } = require('./sites/linkhub');
+const { withFallbackChain } = require('./sites/chain');
 const { createJob, jobLogger, runInJob, formatMb } = require('./mediaLog');
 
 // Sites the bot will fetch from, each with its own fetcher. Add a site by adding an entry.
 // Only listed sites are accepted so arbitrary URLs (e.g. LAN addresses) are never requested.
-// Every fetcher is wrapped with withLinkHub(): LinkHub (LINKHUB_API_URL) parses first, the site's
-// own parser is the fallback. A fetcher receives (url, dir, maxBytes, onStage) and returns
-// { files, author, text, compressed, note? } — note is an optional line shown under the post.
+// Every fetcher is wrapped with withFallbackChain(): LinkHub (LINKHUB_API_URL) parses first, the
+// site's own parser is the fallback, and yt-dlp sites get one more run with different settings
+// (`alt`) when a file comes back empty. A fetcher receives (url, dir, maxBytes, onStage) and
+// returns { files, author, text, compressed, note? } — note is an optional line shown under the post.
+const fetchVideoAlt = (url, dir, maxBytes, onStage) =>
+	fetchVideo(url, dir, maxBytes, onStage, { strategy: 'alt' });
+const fetchYouTubeShortAlt = (url, dir, maxBytes, onStage) =>
+	fetchYouTubeShort(url, dir, maxBytes, onStage, { strategy: 'alt' });
+
 const SUPPORTED_SITES = [
 	{
 		name: 'TikTok',
 		pattern:
 			/^https?:\/\/(?:(?:(?:www|m)\.)?tiktok\.com\/(?:@[\w.-]+\/video\/\d+|t\/[\w-]+|v\/\d+)|(?:vm|vt)\.tiktok\.com\/[\w-]+)/i,
-		fetch: withLinkHub(fetchVideo),
+		fetch: withFallbackChain(fetchVideo, { site: 'TikTok', alt: fetchVideoAlt }),
 	},
 	{
 		name: 'Facebook',
 		pattern:
 			/^https?:\/\/(?:(?:(?:www|m|web|mbasic)\.)?facebook\.com\/(?:share\/(?:[prv]\/)?[\w-]+|[\w.-]+\/posts\/|groups\/[\w.-]+\/(?:posts|permalink)\/|permalink\.php\?|story\.php\?|photo(?:\.php)?\/?\?|[\w.-]+\/photos\/|reel\/\d+|watch\/?\?|[\w.-]+\/videos\/)|fb\.watch\/[\w-]+)/i,
-		fetch: withLinkHub(fetchFacebookPost),
+		fetch: withFallbackChain(fetchFacebookPost, { site: 'Facebook' }),
 	},
 	{
 		name: 'Instagram',
 		pattern:
 			/^https?:\/\/(?:www\.)?instagram\.com\/(?:[\w.]+\/)?(?:reels?|p|tv)\/[\w-]+|^https?:\/\/(?:www\.)?instagram\.com\/share\/(?:reel\/|p\/)?[\w-]+/i,
-		fetch: withLinkHub(fetchInstagramPost),
+		fetch: withFallbackChain(fetchInstagramPost, { site: 'Instagram' }),
 	},
 	{
 		name: '小红书',
 		pattern:
 			/^https?:\/\/(?:xhslink\.com\/(?:[a-z]\/)?\w+|(?:www\.)?xiaohongshu\.com\/(?:explore|discovery\/item)\/[\da-f]+)/i,
-		fetch: withLinkHub(fetchXiaohongshuNote),
+		fetch: withFallbackChain(fetchXiaohongshuNote, { site: '小红书' }),
 	},
 	{
 		name: 'YouTube',
 		// Shorts only; regular videos are too long to post.
 		pattern: /^https?:\/\/(?:(?:www|m)\.)?youtube\.com\/shorts\/[\w-]{11}/i,
-		fetch: withLinkHub(fetchYouTubeShort),
+		fetch: withFallbackChain(fetchYouTubeShort, { site: 'YouTube', alt: fetchYouTubeShortAlt }),
 	},
 	{
 		name: 'B站',
 		// Videos (BV / av ids) and the b23.tv / bili2233.cn short links the app shares.
 		pattern:
 			/^https?:\/\/(?:(?:(?:www|m)\.)?bilibili\.com\/video\/(?:BV\w{10}|av\d+)|(?:b23\.tv|bili2233\.cn)\/[\w-]+)/i,
-		fetch: withLinkHub(fetchVideo),
+		fetch: withFallbackChain(fetchVideo, { site: 'B站', alt: fetchVideoAlt }),
 	},
 	{
 		name: 'Threads',
 		pattern:
 			/^https?:\/\/(?:www\.)?threads\.(?:com|net)\/(?:@[\w.]+\/post\/[\w-]+|share\/[\w-]+)/i,
-		fetch: withLinkHub(fetchThreadsPost),
+		fetch: withFallbackChain(fetchThreadsPost, { site: 'Threads' }),
 	},
 	{
 		name: 'X',
 		// Also the fxtwitter / vxtwitter / fixupx mirrors people share for better embeds.
 		pattern:
 			/^https?:\/\/(?:(?:www|mobile)\.)?(?:x|twitter|fxtwitter|vxtwitter|fixupx|fixvx)\.com\/(?:\w{1,15}|i(?:\/web)?)\/status(?:es)?\/\d+/i,
-		fetch: withLinkHub(fetchXPost),
+		fetch: withFallbackChain(fetchXPost, { site: 'X' }),
 	},
 ];
 

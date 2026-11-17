@@ -3,15 +3,15 @@ const fsp = require('node:fs/promises');
 const path = require('node:path');
 const { Readable, Transform } = require('node:stream');
 const { pipeline } = require('node:stream/promises');
-const { fitVideoToLimit } = require('./video');
+const { fitVideoToLimit, probeVideo, assertUsableVideo, EmptyFileError, MIN_VIDEO_BYTES } = require('./video');
 const { imageExtension } = require('./download');
-const { UserFacingError } = require('./errors');
+const { timeoutSignal } = require('./deadline');
 const { mediaLog, formatMb } = require('../mediaLog');
 
 // LinkHub (../LinkHub) is the parsing aggregator: it routes a link across several open-source
 // parsers (yt-dlp, cobalt, XHS-Downloader, ...) and returns post metadata plus media links.
 // The bot still downloads, compresses and uploads itself. Every fetcher in media.js is wrapped
-// with withLinkHub(): LinkHub first, the site's own parser as fallback while the migration settles.
+// with withFallbackChain() (chain.js): LinkHub first, the site's own parser as fallback.
 const API_URL = (process.env.LINKHUB_API_URL ?? '').replace(/\/+$/, '');
 const API_KEY = process.env.LINKHUB_API_KEY ?? '';
 const PARSE_TIMEOUT_MS = 60 * 1000;
@@ -33,7 +33,7 @@ async function parse(url) {
 		method: 'POST',
 		headers: { 'Content-Type': 'application/json', ...authHeaders() },
 		body: JSON.stringify({ url }),
-		signal: AbortSignal.timeout(PARSE_TIMEOUT_MS),
+		signal: timeoutSignal(PARSE_TIMEOUT_MS),
 	});
 	const payload = await response.json().catch(() => null);
 	if (!payload?.ok) {
@@ -98,7 +98,7 @@ async function downloadGif(format, filePath, maxBytes) {
 	try {
 		response = await fetch(url, {
 			headers: viaGateway ? authHeaders() : (format.headers ?? {}),
-			signal: AbortSignal.timeout(DOWNLOAD_TIMEOUT_MS),
+			signal: timeoutSignal(DOWNLOAD_TIMEOUT_MS),
 		});
 	}
 	catch (error) {
@@ -150,14 +150,19 @@ async function downloadFormat(format, filePath) {
 	const viaGateway = Boolean(format.downloadUrl);
 	const response = await fetch(format.downloadUrl ?? format.url, {
 		headers: viaGateway ? authHeaders() : (format.headers ?? {}),
-		signal: AbortSignal.timeout(DOWNLOAD_TIMEOUT_MS),
+		signal: timeoutSignal(DOWNLOAD_TIMEOUT_MS),
 	});
 	if (!response.ok) {
 		throw new Error(`LinkHub download HTTP ${response.status}`);
 	}
-	await pipeline(Readable.fromWeb(response.body), fs.createWriteStream(filePath));
+	// A response without a body (e.g. 204) is an empty file, not a crash: the chain then tries the next route.
+	await pipeline(response.body ? Readable.fromWeb(response.body) : Readable.from([]), fs.createWriteStream(filePath));
+	const { size } = fs.statSync(filePath);
+	// Status, announced length and bytes actually written: what was missing when an empty file
+	// showed up and nobody could tell which side sent nothing.
 	mediaLog.info(
-		`downloaded ${formatMb(fs.statSync(filePath).size)} via ${viaGateway ? 'LinkHub' : new URL(format.url).hostname}`,
+		`downloaded ${formatMb(size)} via ${viaGateway ? 'LinkHub' : new URL(format.url).hostname}` +
+			` (HTTP ${response.status}, content-length ${response.headers.get('content-length') ?? 'n/a'}, ${size} bytes)`,
 	);
 	return (response.headers.get('content-type') ?? '').split(';')[0].trim();
 }
@@ -241,6 +246,14 @@ async function fetchViaLinkHub(url, dir, maxBytes, onStage) {
 		const file = await downloadItem(item, dir, index + 1, maxBytes - totalBytes);
 		if (!file) continue;
 		const { size } = await fsp.stat(file.path);
+		// Unlike the single-video path above, nothing has looked at these files yet: an empty one
+		// fails the whole attempt so the next route gets a chance.
+		if (size === 0) throw new EmptyFileError(`item ${index + 1} is 0 bytes`);
+		if (file.isVideo) {
+			// A file under the size floor is rejected on size alone; no need to run ffprobe on it.
+			const probe = size >= MIN_VIDEO_BYTES ? await probeVideo(file.path) : null;
+			assertUsableVideo(size, probe, `item ${index + 1}`);
+		}
 		if (totalBytes + size > maxBytes) {
 			mediaLog.info(`skipping item ${index + 1} (${formatMb(size)}): over the upload limit`);
 			continue;
@@ -254,33 +267,8 @@ async function fetchViaLinkHub(url, dir, maxBytes, onStage) {
 	return result;
 }
 
-async function clearDir(dir) {
-	for (const name of await fsp.readdir(dir)) {
-		await fsp.rm(path.join(dir, name), { recursive: true, force: true });
-	}
-}
-
-// LinkHub first; the site's own parser when LinkHub isn't configured or fails. Errors meant for
-// the user (too long to compress, ...) are final either way.
-function withLinkHub(fallback) {
-	return async (url, dir, maxBytes, onStage) => {
-		if (!isConfigured()) return fallback(url, dir, maxBytes, onStage);
-		try {
-			return await fetchViaLinkHub(url, dir, maxBytes, onStage);
-		}
-		catch (error) {
-			// An empty LinkHub file is worth one retry through the local parser.
-			if (error.code !== 'EMPTY_FILE' && (error instanceof UserFacingError || error.code === 'VIDEO_TOO_LONG')) throw error;
-			mediaLog.warn(`LinkHub failed: ${error.message}; falling back to the local parser`);
-			await clearDir(dir);
-			return fallback(url, dir, maxBytes, onStage);
-		}
-	};
-}
-
 module.exports = {
 	fetchViaLinkHub,
-	withLinkHub,
 	isConfigured,
 	// For tests.
 	pickVideoFormat,
