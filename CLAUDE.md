@@ -26,6 +26,10 @@
 - **规划前可以读**：新功能、重做、改架构之前，先看 `../mindhub-vault/index.md` 和相关的 `wiki/projects/`、`wiki/decisions/` 笔记（过去的决定、被否决的做法、用户的偏好）。只读。
 - **不要**：改 `wiki/`、`index.md`、`_CLAUDE.md` 或任何既有笔记；改 `raw/` 里已有的旧档（只能由 `dev-export.py` 更新）；在 vault 里 `git commit` / `pull` / `push`（Obsidian Git 每 10 分钟自动同步，抢着操作会撞上它的提交）。
 
+## 验证
+
+改完要交证据（`npm test`、`npx eslint .`、按改动范围追加的检查、不碰 `prd`、不另开第二个 bot）：见 `docs/verification.md`。
+
 ## 常用指令
 
 | 指令 | 用途 |

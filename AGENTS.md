@@ -15,6 +15,10 @@
 - 密钥在 Doppler（项目 `yohaneowo-bot`：`dev` = 测试版，`prd` = 稳定版），不再用 `.env` 文件；npm 脚本都包在 `doppler run` 里。不要印出值（`doppler secrets` 会印出，用 `--only-names`）。要确认某个变量有没有设，只看「有没有值」。新电脑先 `doppler login`，再在本目录 `doppler setup`。Git Bash 里执行 `doppler` 要加 `env -u PWD`（它会读 Unix 格式的 `PWD`，找不到登录状态）。`config.json` 只有 clientId / guildId。
 - `data/`（动态语音、电影推荐、向量缓存）是 gitignore 的执行资料；Docker 里由 `bot-data` volume 保存。
 
+## 验证
+
+改完要交证据（`npm test`、`npx eslint .`、按改动范围追加的检查、不碰 `prd`、不另开第二个 bot）：见 `docs/verification.md`。
+
 ## 常用指令
 
 | 指令 | 用途 |
