@@ -11,7 +11,7 @@ const { execFileSync, spawnSync } = require('node:child_process');
 const repro = require('../scripts/repro.js');
 
 const {
-	main, parseArgs, validateUrl, extractContentId, buildChildEnv, readBotEnviron, redact, sweepStale,
+	main, parseArgs, validateUrl, extractContentId, buildChildEnv, collectRedactions, readBotEnviron, redact, sweepStale,
 	analyzeLog, buildReport, runChild, assertSafeTarEntries, findArchiveTop, readArchiveSha, emergencyCleanup, ScriptError, EXIT,
 } = repro;
 
@@ -371,6 +371,7 @@ module.exports = {
 		console.log('[YouTube#abcd +0.3s] running yt-dlp');
 		console.log('debug: key=' + process.env.LINKHUB_API_KEY + ' url=' + process.env.LINKHUB_API_URL);
 		console.log('debug: token present=' + Boolean(process.env.TOKEN) + ' doppler present=' + Boolean(process.env.DOPPLER_TOKEN) + ' admin present=' + Boolean(process.env.ADMIN_API_TOKEN));
+		console.log('debug: ytdlp=' + process.env.YTDLP_PATH + ' xhs=' + process.env.XHS_API_URL + ' lang=' + process.env.LANG);
 		console.log('debug: dependencies visible=' + fs.existsSync(path.join(__dirname, '..', 'node_modules', 'marker.txt')));
 		console.log('debug: tmpdir=' + os.tmpdir().replace(/\\\\/g, '/').split('/').slice(-2).join('/'));
 		console.log('[YouTube#abcd +0.4s] recovered by local after linkhub came back empty');
@@ -458,6 +459,25 @@ test('a run on the copy itself (--ref current): measured, no extraction, nothing
 	assert.match(tail, /tmpdir=repro-[A-Za-z0-9]{6}\/tmp/, 'the version ran with the staging directory as its temp dir');
 	assert.deepEqual(fs.readdirSync(stagingRoot), [], 'the staging directory (and the media it made) is gone');
 	assert.equal(fs.readFileSync(path.join(repo, 'node_modules', 'marker.txt'), 'utf8'), 'the real dependencies');
+});
+
+test('every environment value handed to the version is kept out of the output, not only the LinkHub ones', async () => {
+	const { repo } = makeRepo();
+	const stagingRoot = newStagingRoot();
+	const ytdlp = 'C:/tools/private-name/yt-dlp-special.exe';
+	const xhs = 'http://internal-host.example:5556/xhs';
+	const { code, out, json } = await runMain([URL_A, '--ref', 'current', '--min-free-mb', '0'], {
+		repo,
+		stagingRoot,
+		env: { ...BASE_ENV, YTDLP_PATH: ytdlp, XHS_API_URL: xhs, LANG: 'C' },
+	});
+	assert.equal(code, EXIT.OK);
+	assert.equal(json.ok, true);
+	for (const value of [ytdlp, xhs]) {
+		assert.equal(out.text().includes(value), false, 'a whitelisted environment value is not in the output');
+	}
+	assert.match(json.log_tail.join('\n'), /debug: ytdlp=\[redacted\] xhs=\[redacted\] lang=C/, 'a value shorter than four characters is left alone');
+	assert.deepEqual(collectRedactions({ A: 'abc', B: 'abcd', C: 'abcdef', D: undefined, E: '', F: 'abcd' }), ['abcdef', 'abcd']);
 });
 
 test('without the LinkHub settings the run still happens and says so', async () => {

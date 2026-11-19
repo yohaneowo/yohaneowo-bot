@@ -234,6 +234,17 @@ function buildChildEnv(env, stagingTmp, fromBot = {}) {
 	return childEnv;
 }
 
+// Every value handed to the child, not only the two LinkHub ones: any of them can end up in a log line or an
+// error message. Very short values (a one-letter LANG) are left alone, they would mangle the output. Longest
+// first, so a value that contains another one is replaced whole.
+function collectRedactions(childEnv) {
+	const values = new Set();
+	for (const value of Object.values(childEnv)) {
+		if (typeof value === 'string' && value.length >= 4) values.add(value);
+	}
+	return [...values].sort((a, b) => b.length - a.length);
+}
+
 // Everything this script prints goes through here first: a value that came from the environment must not
 // show up in a log line, an error message or a note, whatever put it there.
 function redact(text, secretValues) {
@@ -683,9 +694,7 @@ async function main(argv, deps = {}) {
 		if (options.ref !== 'current') notes.push(...(await linkDependencies({ repoRoot, tree: version.tree })));
 
 		const childEnv = buildChildEnv(env, stagingTmp, readFromBot());
-		for (const key of SECRET_ENV_KEYS) {
-			if (childEnv[key] && childEnv[key].length >= 4) secretValues.push(childEnv[key]);
-		}
+		secretValues.push(...collectRedactions(childEnv));
 		if (!SECRET_ENV_KEYS.every((key) => childEnv[key])) {
 			notes.push('LINKHUB_API_URL / LINKHUB_API_KEY were not found: only the local (non-LinkHub) route can run');
 		}
@@ -732,6 +741,7 @@ module.exports = {
 	validateUrl,
 	extractContentId,
 	buildChildEnv,
+	collectRedactions,
 	readBotEnviron,
 	parseEnviron,
 	redact,

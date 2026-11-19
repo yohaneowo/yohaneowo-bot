@@ -115,7 +115,7 @@ docker exec -u node -w /app <dev 的 portfolio-bot 容器> node scripts/repro.js
 ```
 
 - **不要用 `doppler run`**：脚本自己从 bot 主进程（`node index.js`，工作目录就是这个 repo）按名字只拷 `LINKHUB_API_URL`、`LINKHUB_API_KEY` 两个变量；`DOPPLER_TOKEN`、`TOKEN`（bot token）、admin、webhook 等一律不拷，也不会传给被量测的版本。在 Coolify 容器里这两个变量只在 bot 进程里，PID 1（docker-init）没有它们，只有 `DOPPLER_TOKEN`；脚本也会先看 PID 1，但只认这两个名字。
-- 输出里任何环境变量的值都会被替换成 `[redacted]`；脚本不印环境、不加载 `index.js` 或 `discord.js`，不可能登入 Discord。被量测的版本在子进程里跑，只拿到 `PATH`、yt-dlp／ffmpeg／ffprobe 的路径、`XHS_API_URL` 和上面两个变量，临时目录指向暂存目录。
+- 输出里交给被量测版本的每一个环境变量的值（不只 LinkHub 两个；短于 4 个字的值除外，否则会把输出弄乱）都会被替换成 `[redacted]`；脚本不印环境、不加载 `index.js` 或 `discord.js`，不可能登入 Discord。被量测的版本在子进程里跑，只拿到 `PATH`、yt-dlp／ffmpeg／ffprobe 的路径、`XHS_API_URL` 和上面两个变量，临时目录指向暂存目录。
 - 限制：只比对「交档的是哪一层」，不能指定只走某一层；`content_id` 只来自链接本身，所以 Facebook 分享连结「跳转后的 reel ID」目前量不到；旧版本的 `layer` 是推断的。
 
 ### 回报 bot 问题（`services/botReport.js`，第一期：只收件）
