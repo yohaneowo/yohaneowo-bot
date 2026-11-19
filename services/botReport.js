@@ -141,21 +141,46 @@ function normalizeScreenshots(files) {
 	return { accepted, dropped };
 }
 
-// What OpenBot receives: exactly the seven fields the boss allowed for the agent that reproduces the problem
-// (decision of 2026-11-19): ticket number, site, the link reduced to host, path and id parameters, symptom
-// (from a fixed list), the bot version the result came from, the id of the bot's message, and how many
-// screenshots there are. Everything else (the person's note, the screenshot links, whose path carries the
-// name the uploader chose, and the bot's own measurements such as bytes and seconds) stays in the bot's data
-// file for a person to read. A new field here is a new input for that agent and needs a decision first.
+// The bot's own measurements of the result are passed only as fixed words or numbers, so nothing else can
+// ride along even if a caller records something unexpected: a value outside these sets becomes null.
+const OUTCOMES = new Set(['success', 'failed']);
+const LAYERS = new Set(['linkhub', 'local', 'local-first', 'local-alt']);
+
+function fixedOutcome(value) {
+	return OUTCOMES.has(value) ? value : null;
+}
+
+// One rung name, or the rungs a failure went through joined with ">" (chain.js).
+function fixedLayer(value) {
+	if (typeof value !== 'string' || value.length === 0) return null;
+	return value.split('>').every((name) => LAYERS.has(name)) ? value : null;
+}
+
+function measurement(value) {
+	return typeof value === 'number' && Number.isFinite(value) && value >= 0 ? value : null;
+}
+
+// What OpenBot receives (decision of 2026-11-19: the agent that reproduces the problem gets nothing a user
+// wrote): ticket number, site, the link reduced to host, path and id parameters, symptom (from a fixed
+// list), the bot version the result came from, the id of the bot's message, how many screenshots there are,
+// and the bot's own record of that result (outcome, bytes, seconds, which layer delivered it), to compare
+// the reproduction with. The person's note and the screenshot links (whose path carries the name the
+// uploader chose) stay in the bot's data file for a person to read, with the rest of the record. A new field
+// here is a new input for that agent and needs a decision first.
 function buildPayload(report) {
+	const context = report.context;
 	return {
 		report_id: report.id,
 		site: report.site ?? null,
 		url: report.url ? canonicalUrl(report.url) : null,
 		symptom: report.symptom,
 		bot_version: report.bot_version,
-		message_id: report.context?.message_id ?? null,
+		message_id: context?.message_id ?? null,
 		screenshot_count: (report.screenshots ?? []).length,
+		outcome: fixedOutcome(context?.outcome),
+		bytes: measurement(context?.bytes),
+		duration_sec: measurement(context?.duration_sec),
+		layer: fixedLayer(context?.layer),
 	};
 }
 
