@@ -394,14 +394,14 @@ test('each person gets 3 new tickets a day; merging does not count, the next day
 	const answers = [];
 	for (let n = 1; n <= 4; n++) answers.push(await report(feature, { customId: `fb:m:btn:m${n}`, id: `i-${n}`, userId: 'u1' }));
 	assert.deepEqual(answers.map((interaction) => /已收到，编号/.test(text(interaction))), [true, true, true, false]);
-	assert.match(text(answers[3]), /你今天已经回报了 3 次/);
+	assert.match(text(answers[3]), /你最近 24 小时已经回报了 3 次/);
 	assert.equal(sent.length, 3);
 
 	record(feature, { id: 'mX', userId: 'u9' });
 	const other = await report(feature, { customId: 'fb:m:btn:m1', id: 'i-other', userId: 'u2' });
 	assert.match(text(other), /已经有人回报过了/, 'a merge works even for a person who is not at the limit');
 	const stillLimited = await report(feature, { customId: 'fb:m:btn:m4', id: 'i-again', userId: 'u1' });
-	assert.match(text(stillLimited), /你今天已经回报了 3 次/);
+	assert.match(text(stillLimited), /你最近 24 小时已经回报了 3 次/);
 
 	clock += DAY_MS + 1000;
 	const nextDay = await report(feature, { customId: 'fb:m:btn:m4', id: 'i-next', userId: 'u1' });
@@ -432,7 +432,7 @@ test('10 tickets a day go out for reproduction; the 11th is kept with its number
 	assert.equal(sent.length, 10);
 
 	const eleventh = await reportFromNewPerson(feature, 11);
-	assert.match(text(eleventh), /已收到并存档，编号 #11。今天全站送去自动重现的名额（10 张）已经用完，这张只存档、不会排进自动重现/);
+	assert.match(text(eleventh), /已收到并存档，编号 #11。全站最近 24 小时送去自动重现的名额（10 张）已经用完，这张只存档、不会排进自动重现/);
 	assert.equal(sent.length, 10, 'nothing is sent past the limit');
 	const kept = feature.store.getReport(11);
 	assert.deepEqual([kept.eligible, kept.archive_reason, kept.delivery.status], [false, 'daily_limit', 'skipped']);
@@ -466,7 +466,7 @@ test('what does not use up the daily limit: merges, tickets kept because the lin
 	}
 	for (let n = 60; n < 64; n++) record(feature, { id: `m${n}`, userId: 'busy', url: shortsUrl(n) });
 	for (let n = 60; n < 63; n++) await report(feature, { customId: `fb:m:btn:m${n}`, userId: 'busy', id: `i-busy-${n}` });
-	assert.match(text(await report(feature, { customId: 'fb:m:btn:m63', userId: 'busy', id: 'i-busy-63' })), /你今天已经回报了 3 次/);
+	assert.match(text(await report(feature, { customId: 'fb:m:btn:m63', userId: 'busy', id: 'i-busy-63' })), /你最近 24 小时已经回报了 3 次/);
 	assert.equal(feature.store.countQueued(DAY_MS), 2, 'only ticket #1 and the first of "busy" were queued');
 	assert.deepEqual(sent.map((event) => event.data.report_id), [1, 5]);
 	assert.deepEqual([6, 7].map((id) => feature.store.getReport(id).archive_reason), ['daily_limit', 'daily_limit']);
@@ -479,7 +479,7 @@ test('a ticket kept by the daily limit counts towards the person\'s own limit', 
 	const answers = [];
 	for (let n = 2; n <= 5; n++) answers.push(text(await report(feature, { customId: `fb:m:btn:m${n}`, userId: 'u1', id: `i-${n}` })));
 	assert.deepEqual(answers.map((answer) => /名额（1 张）已经用完/.test(answer)), [true, true, true, false]);
-	assert.match(answers[3], /你今天已经回报了 3 次/);
+	assert.match(answers[3], /你最近 24 小时已经回报了 3 次/);
 	assert.equal(sent.length, 1);
 });
 
@@ -489,7 +489,7 @@ test('merging into a kept ticket: same number, nothing sent, and the person is t
 	await reportFromNewPerson(feature, 2);
 	record(feature, { id: 'm2b', userId: 'q2', url: shortsUrl(2) });
 	const intoKept = await report(feature, { customId: 'fb:m:btn:m2b', userId: 'q2', id: 'i-2b' });
-	assert.match(text(intoKept), /已经有人回报过了，编号 #2，你的回报并进去了。今天的自动重现名额已满，这张只存档。/);
+	assert.match(text(intoKept), /已经有人回报过了，编号 #2，你的回报并进去了。最近 24 小时的自动重现名额已满，这张只存档。/);
 	record(feature, { id: 'm1b', userId: 'q1', url: shortsUrl(1) });
 	const intoQueued = await report(feature, { customId: 'fb:m:btn:m1b', userId: 'q1', id: 'i-1b' });
 	assert.match(text(intoQueued), /已经有人回报过了，编号 #1，你的回报并进去了。$/);

@@ -433,19 +433,19 @@ function createFeature(options = {}) {
 
 			const outcome = applyRules({ userId: interaction.user.id, interactionId: interaction.id, source, symptom, note, shots, target });
 			if (outcome.kind === 'limited') {
-				return await interaction.reply(ephemeral(`你今天已经回报了 ${config.maxPerUserPerDay} 次，明天再来；如果是同一个问题，不用重复回报。`));
+				return await interaction.reply(ephemeral(`你最近 24 小时已经回报了 ${config.maxPerUserPerDay} 次，请过一阵子再来；如果是同一个问题，不用重复回报。`));
 			}
 			const id = outcome.report.id;
 			const droppedText = dropped ? `（有 ${dropped} 个附件不是图片或超过 ${SCREENSHOT_MAX} 张，没有附上）` : '';
 			const keptOnly = outcome.report.archive_reason === ARCHIVE_REASONS.DAILY_LIMIT
-				? '今天的自动重现名额已满，这张只存档。'
+				? '最近 24 小时的自动重现名额已满，这张只存档。'
 				: '这张只存档，不会排进自动重现。';
 			const answers = {
 				created: `已收到，编号 #${id}。${droppedText}`,
 				duplicate: `已收到，编号 #${id}。`,
 				merged: `这个问题已经有人回报过了，编号 #${id}，你的回报并进去了。${outcome.report.eligible ? '' : keptOnly}`,
 				archived: `已收到并存档，编号 #${id}。这条链接不在你近期的解析记录里，所以不会排进自动重现。${droppedText}`,
-				limitedToday: `已收到并存档，编号 #${id}。今天全站送去自动重现的名额（${config.maxSentPerDay} 张）已经用完，这张只存档、不会排进自动重现；明天还有同样的问题可以再回报。${droppedText}`,
+				limitedToday: `已收到并存档，编号 #${id}。全站最近 24 小时送去自动重现的名额（${config.maxSentPerDay} 张）已经用完，这张只存档、不会排进自动重现；名额释放后如果问题还在，可以再回报。${droppedText}`,
 			};
 			await interaction.reply(ephemeral(answers[outcome.kind]));
 			if (source === 'cmd') commandTokens.delete(ref);
