@@ -182,6 +182,7 @@ TMDB、Trakt、Anthropic、Voyage 的 key 都不在这里：电影功能的 TMDB
 | `MAGNET_WEBHOOK_URL` / `MAGNET_WEBHOOK_SECRET` | | 两个都设了才开启磁力链接转交，只在**私信**生效：`services/magnetRelay.js` 里内置的白名单用户（可用 `MAGNET_USER_IDS`，Discord 用户 ID 逗号分隔，覆盖内置名单）私信 bot 磁力链接时，bot 会查标题和大小，回一张带「确认／取消」按钮的卡片；按确认后才用签章 webhook 把链接交给 OpenBot（由 OpenBot 的助手加进 PikPak）。其他人、服务器里的磁力链接一律忽略。bot 本身不持有 PikPak 帐密，也不删原消息。同一个磁力 30 分钟内只转交一次，卡片 10 分钟没按就过期。需要 Message Content Intent |
 | `FEEDBACK_WEBHOOK_URL` / `FEEDBACK_WEBHOOK_SECRET` | | 两个都设了才开启「回报 bot 问题」；网址是 OpenBot 接收回报的 webhook，密钥用来签章，格式与磁力转交相同 |
 | `FEEDBACK_DEDUPE_MINUTES` / `FEEDBACK_MAX_PER_USER_PER_DAY` / `FEEDBACK_RECENT_PARSE_DAYS` | | 同一条链接＋症状＋bot 版本合并的时间窗（默认 `1440` 分钟）、每人 24 小时最多开几张新单（默认 `3`）、`/report` 的链接要在几天内的解析记录里（默认 `7`） |
+| `FEEDBACK_MAX_SENT_PER_DAY` | | 全站 24 小时内最多送几张单去自动重现（默认 `10`）；超过的照样给编号，但只存档、不送 |
 | `MAGNET_META_LOOKUP` | | 默认开启：查标题时会把磁力的 infohash 发给公开的 torrent 快取（itorrents.org），取回 .torrent 并用 SHA-1 对照 infohash 才采用。设为 `false` 就不对外查询，卡片只显示链接自带的名称 |
 | `BINANCE_API_KEY` / `BINANCE_SECRET` | | 只读 API key |
 | `BYBIT_API_KEY` / `BYBIT_SECRET` | | 只读 API key |

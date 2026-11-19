@@ -157,6 +157,13 @@ function createStore(options = {}) {
 			return report;
 		},
 
+		// Reports queued for reproduction (sent, or still owed after a failed send) since the given time: the
+		// count the daily limit for the whole bot is checked against. Archived reports are not in it.
+		countQueued(sinceMs) {
+			const t = now();
+			return data.reports.filter((report) => report.eligible && t - report.created_at < sinceMs).length;
+		},
+
 		// Reports a user opened (not merged into someone else's) since the given time.
 		countOpenedBy(userId, sinceMs) {
 			const t = now();

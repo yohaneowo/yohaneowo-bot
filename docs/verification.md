@@ -122,10 +122,11 @@ docker exec -u node -w /app <dev 的 portfolio-bot 容器> node scripts/repro.js
 
 - 三个入口共用一张表单：右键 bot 的讯息「回报 bot 问题」、失败讯息下的「回报」按钮、`/report <链接>`。**两个环境变量都设了才开启**（`FEEDBACK_WEBHOOK_URL`、`FEEDBACK_WEBHOOK_SECRET`，Doppler 里，由老板在接收员工的私聊里建好 routine 后再填）；没设就不显示按钮、不存档、不送，和磁力转交一样。
 - 每次 bot 发出结果（成功或失败）都在 `data/bot-reports.json` 记一行上下文：讯息 ID、链接、站点、结果、字节数、秒数、交档的是哪一层、bot 版本（`SOURCE_COMMIT` 前 12 位）。这是因为 bot 的 token 事后查不到 admin 的解析日志，而两个真实 bug 在那里都记成「成功」。
-- 规则（不用 AI）：只收 bot 自己发的讯息；同一条链接＋同一症状＋同一 bot 版本在 24 小时内合并成同一个编号（`FEEDBACK_DEDUPE_MINUTES`）；每人 24 小时最多开 3 张新单，合并不算（`FEEDBACK_MAX_PER_USER_PER_DAY`）；`/report` 的链接必须在这个人 7 天内的解析记录里（`FEEDBACK_RECENT_PARSE_DAYS`），否则只存档、不送；同一个互动 ID 只建一张单。
+- 规则（不用 AI）：只收 bot 自己发的讯息；同一条链接＋同一症状＋同一 bot 版本在 24 小时内合并成同一个编号（`FEEDBACK_DEDUPE_MINUTES`）；每人 24 小时最多开 3 张新单，合并不算（`FEEDBACK_MAX_PER_USER_PER_DAY`）；全站 24 小时内最多 10 张单送去自动重现（`FEEDBACK_MAX_SENT_PER_DAY`，滚动 24 小时），超过的照样给编号但只存档、不送（`archive_reason: daily_limit`，重启也不补送），合并、因链接不在解析记录而存档的单、被每人上限挡掉的都不占名额，送不出去待重送的单占名额，被全站上限存档的单仍算进这个人的 3 张；`/report` 的链接必须在这个人 7 天内的解析记录里（`FEEDBACK_RECENT_PARSE_DAYS`），否则只存档、不送；同一个互动 ID 只建一张单。
 - 事件 `bot.feedback_report`，签章与磁力转交共用 `services/openbotWebhook.js`；delivery id 第一次是 `feedback-<编号>`，重送是 `feedback-<编号>-r<次数>`。用户原话只在 `user_note`（旁边有 `user_note_notice`），链接只留域名、路径和少数识别参数，截图只送链接和大小，不送档名栏位。**限制**：Discord 的截图链接路径里本来就有上传者取的档名，不能剥掉。
 - 送不出去（接收端挂了、5xx）会记成 `failed`，用户仍会拿到编号；下次 bot 启动、或有人合并进这张单时重送一次。接收端回 4xx（签章不对、routine 不存在）不重试，但重启时仍会再试一次（只试 24 小时内的、最多 10 张），所以改设定后不用手动处理。
 - 私信通知（修好后告诉回报人）只留接口 `notifyReporter()`，永远回 `{ sent: false, reason: 'disabled' }`：固定文案要老板先批，而且只在修复上了稳定版之后才能发。
+- 规则的先后（先符合的决定）：同一个互动 ID → 原来那张；同链接＋症状＋版本在窗内 → 合并（不占每人与全站名额，只在被合并的单有送时才可能补送）；这个人 24 小时已开满 → 拒绝、不存；否则开新单，有解析记录且全站名额未满才送，否则只存档。
 - 要交的证据：`test/bot-report.test.js`、`test/media-post-report.test.js`、`test/repro.test.js` 通过；功能的真实往返在 dev 容器里用真 HTTP 打到本机接收器，由接收器自己用 `crypto` 验签（见开发记录）。**还没验证**：真实 Discord 里点按钮、右键指令、表单与截图上传（指令要 `npm run deploy:dev` 才会出现）。
 
 ### 删原讯息契约（`index.js`）

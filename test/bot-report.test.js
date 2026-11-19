@@ -408,6 +408,108 @@ test('each person gets 3 new tickets a day; merging does not count, the next day
 	assert.match(text(nextDay), /已收到，编号 #4/);
 });
 
+// ---------------------------------------------------------------- the daily limit for the whole bot
+
+const shortsUrl = (n) => `https://www.youtube.com/shorts/${`v${n}`.padEnd(11, 'x')}`;
+
+// One result per person and link, so neither merging nor the per-person limit gets in the way.
+async function reportFromNewPerson(feature, n, extra = {}) {
+	record(feature, { id: `m${n}`, userId: `p${n}`, url: shortsUrl(n) });
+	return report(feature, { customId: `fb:m:btn:m${n}`, userId: `p${n}`, id: `i-${n}`, ...extra });
+}
+
+test('the daily limit defaults to 10, can be changed from the environment, and a bad value falls back', () => {
+	assert.equal(loadConfig(ENABLED_ENV).maxSentPerDay, 10);
+	assert.equal(loadConfig({ ...ENABLED_ENV, FEEDBACK_MAX_SENT_PER_DAY: '4' }).maxSentPerDay, 4);
+	for (const bad of ['0', '-3', 'ten', '2.5', '']) {
+		assert.equal(loadConfig({ ...ENABLED_ENV, FEEDBACK_MAX_SENT_PER_DAY: bad }).maxSentPerDay, 10, `value ${JSON.stringify(bad)}`);
+	}
+});
+
+test('10 tickets a day go out for reproduction; the 11th is kept with its number, not sent, and the person is told why', async () => {
+	const feature = makeFeature();
+	for (let n = 1; n <= 10; n++) assert.match(text(await reportFromNewPerson(feature, n)), new RegExp(`已收到，编号 #${n}。`));
+	assert.equal(sent.length, 10);
+
+	const eleventh = await reportFromNewPerson(feature, 11);
+	assert.match(text(eleventh), /已收到并存档，编号 #11。今天全站送去自动重现的名额（10 张）已经用完，这张只存档、不会排进自动重现/);
+	assert.equal(sent.length, 10, 'nothing is sent past the limit');
+	const kept = feature.store.getReport(11);
+	assert.deepEqual([kept.eligible, kept.archive_reason, kept.delivery.status], [false, 'daily_limit', 'skipped']);
+	assert.ok(kept.context, 'the result it is about is still recorded with the ticket');
+	assert.ok(warnings.some((line) => /Report #11 is only kept: 10 reports were already queued/.test(line)));
+	assert.equal(await feature.redeliverPending(), 0, 'a kept ticket is not sent after a restart either');
+	assert.equal(sent.length, 10);
+});
+
+test('the daily limit is a rolling 24 hours: a slot frees up when the oldest queued ticket is a day old', async () => {
+	const feature = makeFeature({ env: { ...ENABLED_ENV, FEEDBACK_MAX_SENT_PER_DAY: '2' } });
+	await reportFromNewPerson(feature, 1);
+	clock += 12 * 60 * 60 * 1000;
+	await reportFromNewPerson(feature, 2);
+	assert.match(text(await reportFromNewPerson(feature, 3)), /名额（2 张）已经用完/);
+	clock += 12 * 60 * 60 * 1000 + 1000;
+	assert.match(text(await reportFromNewPerson(feature, 4)), /已收到，编号 #4。/, 'ticket #1 left the window');
+	assert.match(text(await reportFromNewPerson(feature, 5)), /名额（2 张）已经用完/, 'ticket #2 is still inside it');
+	assert.deepEqual(sent.map((event) => event.data.report_id), [1, 2, 4]);
+});
+
+test('what does not use up the daily limit: merges, tickets kept because the link is not in the person\'s records, refusals', async () => {
+	const feature = makeFeature({ env: { ...ENABLED_ENV, FEEDBACK_MAX_SENT_PER_DAY: '2' } });
+	await reportFromNewPerson(feature, 1);
+	record(feature, { id: 'm1b', userId: 'q1', url: shortsUrl(1) });
+	assert.match(text(await report(feature, { customId: 'fb:m:btn:m1b', userId: 'q1', id: 'i-merge' })), /已经有人回报过了，编号 #1，你的回报并进去了。$/);
+	for (let n = 0; n < 3; n++) {
+		const opened = slash({ userId: `stranger${n}`, url: shortsUrl(50 + n), id: `i-open-${n}` });
+		await feature.handleCommand(opened);
+		assert.match(text(await report(feature, { customId: opened.modals[0].custom_id, userId: `stranger${n}`, id: `i-s-${n}` })), /不在你近期的解析记录里/);
+	}
+	for (let n = 60; n < 64; n++) record(feature, { id: `m${n}`, userId: 'busy', url: shortsUrl(n) });
+	for (let n = 60; n < 63; n++) await report(feature, { customId: `fb:m:btn:m${n}`, userId: 'busy', id: `i-busy-${n}` });
+	assert.match(text(await report(feature, { customId: 'fb:m:btn:m63', userId: 'busy', id: 'i-busy-63' })), /你今天已经回报了 3 次/);
+	assert.equal(feature.store.countQueued(DAY_MS), 2, 'only ticket #1 and the first of "busy" were queued');
+	assert.deepEqual(sent.map((event) => event.data.report_id), [1, 5]);
+	assert.deepEqual([6, 7].map((id) => feature.store.getReport(id).archive_reason), ['daily_limit', 'daily_limit']);
+});
+
+test('a ticket kept by the daily limit counts towards the person\'s own limit', async () => {
+	const feature = makeFeature({ env: { ...ENABLED_ENV, FEEDBACK_MAX_SENT_PER_DAY: '1' } });
+	await reportFromNewPerson(feature, 1);
+	for (let n = 2; n <= 5; n++) record(feature, { id: `m${n}`, userId: 'u1', url: shortsUrl(n) });
+	const answers = [];
+	for (let n = 2; n <= 5; n++) answers.push(text(await report(feature, { customId: `fb:m:btn:m${n}`, userId: 'u1', id: `i-${n}` })));
+	assert.deepEqual(answers.map((answer) => /名额（1 张）已经用完/.test(answer)), [true, true, true, false]);
+	assert.match(answers[3], /你今天已经回报了 3 次/);
+	assert.equal(sent.length, 1);
+});
+
+test('merging into a kept ticket: same number, nothing sent, and the person is told it is only kept; into a queued one it works as before', async () => {
+	const feature = makeFeature({ env: { ...ENABLED_ENV, FEEDBACK_MAX_SENT_PER_DAY: '1' } });
+	await reportFromNewPerson(feature, 1);
+	await reportFromNewPerson(feature, 2);
+	record(feature, { id: 'm2b', userId: 'q2', url: shortsUrl(2) });
+	const intoKept = await report(feature, { customId: 'fb:m:btn:m2b', userId: 'q2', id: 'i-2b' });
+	assert.match(text(intoKept), /已经有人回报过了，编号 #2，你的回报并进去了。今天的自动重现名额已满，这张只存档。/);
+	record(feature, { id: 'm1b', userId: 'q1', url: shortsUrl(1) });
+	const intoQueued = await report(feature, { customId: 'fb:m:btn:m1b', userId: 'q1', id: 'i-1b' });
+	assert.match(text(intoQueued), /已经有人回报过了，编号 #1，你的回报并进去了。$/);
+	assert.deepEqual(sent.map((event) => event.data.report_id), [1]);
+	assert.equal(feature.store.getReport(2).count, 2);
+});
+
+test('a queued ticket whose delivery failed still holds its slot (it is still owed to the receiver)', async () => {
+	const feature = makeFeature({
+		env: { ...ENABLED_ENV, FEEDBACK_MAX_SENT_PER_DAY: '1' },
+		send: async (config, event) => {
+			sent.push(event);
+			throw new Error('webhook answered 503');
+		},
+	});
+	await reportFromNewPerson(feature, 1);
+	assert.equal(feature.store.getReport(1).delivery.status, 'failed');
+	assert.match(text(await reportFromNewPerson(feature, 2)), /名额（1 张）已经用完/);
+});
+
 test('the same interaction arriving twice makes one ticket, one answer path, one event', async () => {
 	const feature = makeFeature();
 	record(feature);

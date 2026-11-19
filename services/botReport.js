@@ -46,11 +46,19 @@ const SYMPTOMS = {
 	other: '其他',
 };
 
-// The three numbers that are chosen by measurement (see the report of 2026-11-19); each can be overridden by
-// an environment variable without a code change.
+// The numbers that are chosen by measurement or decided (see the reports of 2026-11-19); each can be
+// overridden by an environment variable without a code change. The daily limit for the whole bot keeps the
+// reproduction work within what the receiving agent can do in a day; beyond it a ticket is only kept.
 const DEFAULT_DEDUPE_MINUTES = 24 * 60;
 const DEFAULT_MAX_PER_USER_PER_DAY = 3;
+const DEFAULT_MAX_SENT_PER_DAY = 10;
 const DEFAULT_RECENT_PARSE_DAYS = 7;
+
+// Why a ticket is only kept and not sent.
+const ARCHIVE_REASONS = {
+	NOT_RECENT: 'not_in_recent_parses',
+	DAILY_LIMIT: 'daily_limit',
+};
 
 function isHttpUrl(value) {
 	try {
@@ -75,6 +83,7 @@ function loadConfig(env = process.env) {
 		secret,
 		dedupeWindowMs: positiveInt(env.FEEDBACK_DEDUPE_MINUTES, DEFAULT_DEDUPE_MINUTES) * 60 * 1000,
 		maxPerUserPerDay: positiveInt(env.FEEDBACK_MAX_PER_USER_PER_DAY, DEFAULT_MAX_PER_USER_PER_DAY),
+		maxSentPerDay: positiveInt(env.FEEDBACK_MAX_SENT_PER_DAY, DEFAULT_MAX_SENT_PER_DAY),
 		recentParseMs: positiveInt(env.FEEDBACK_RECENT_PARSE_DAYS, DEFAULT_RECENT_PARSE_DAYS) * DAY_MS,
 		// Telling the reporter in a DM that the fix is live is only wired up, not switched on: the wording
 		// has to be approved first, and it is only ever sent after the fix reached the stable bot.
@@ -343,7 +352,15 @@ function createFeature(options = {}) {
 		}
 	}
 
-	// The rules. Returns what happened so the caller can word the answer; touches the store only here.
+	// The rules, in this order (the first that applies decides):
+	// 1. the same interaction again: the ticket it already made;
+	// 2. the same link, symptom and bot version inside the dedupe window: merged into that ticket (neither a
+	//    new ticket for the person nor one more for the whole bot; sent only if the ticket it joins is);
+	// 3. the person already opened their tickets for the last 24 hours: refused, nothing is kept;
+	// 4. a new ticket. It is queued for reproduction when the bot has a record of the result and fewer than
+	//    the daily limit of tickets were queued in the last 24 hours; otherwise it is only kept (archived).
+	//    Kept tickets count towards the person's limit but not towards the daily limit.
+	// Returns what happened so the caller can word the answer; touches the store only here.
 	function applyRules({ userId, interactionId, source, symptom, note, shots, target }) {
 		const existing = getStore().findReportByInteraction(interactionId);
 		if (existing) return { kind: 'duplicate', report: existing };
@@ -360,6 +377,9 @@ function createFeature(options = {}) {
 		}
 		if (getStore().countOpenedBy(userId, DAY_MS) >= config.maxPerUserPerDay) return { kind: 'limited' };
 
+		let archiveReason = null;
+		if (!(context && target.matched)) archiveReason = ARCHIVE_REASONS.NOT_RECENT;
+		else if (getStore().countQueued(DAY_MS) >= config.maxSentPerDay) archiveReason = ARCHIVE_REASONS.DAILY_LIMIT;
 		const report = getStore().createReport({
 			source,
 			symptom,
@@ -369,11 +389,16 @@ function createFeature(options = {}) {
 			site: target.site,
 			user_id: userId,
 			context: context ?? null,
-			eligible: Boolean(context && target.matched),
+			eligible: archiveReason === null,
+			archive_reason: archiveReason,
 			bot_version: reportVersion,
 			interaction_ids: [interactionId],
 			screenshots: shots,
 		});
+		if (archiveReason === ARCHIVE_REASONS.DAILY_LIMIT) {
+			log.warn(`[report] Report #${report.id} is only kept: ${config.maxSentPerDay} reports were already queued for reproduction in the last 24 hours.`);
+			return { kind: 'limitedToday', report };
+		}
 		return { kind: report.eligible ? 'created' : 'archived', report };
 	}
 
@@ -412,11 +437,15 @@ function createFeature(options = {}) {
 			}
 			const id = outcome.report.id;
 			const droppedText = dropped ? `（有 ${dropped} 个附件不是图片或超过 ${SCREENSHOT_MAX} 张，没有附上）` : '';
+			const keptOnly = outcome.report.archive_reason === ARCHIVE_REASONS.DAILY_LIMIT
+				? '今天的自动重现名额已满，这张只存档。'
+				: '这张只存档，不会排进自动重现。';
 			const answers = {
 				created: `已收到，编号 #${id}。${droppedText}`,
 				duplicate: `已收到，编号 #${id}。`,
-				merged: `这个问题已经有人回报过了，编号 #${id}，你的回报并进去了。`,
+				merged: `这个问题已经有人回报过了，编号 #${id}，你的回报并进去了。${outcome.report.eligible ? '' : keptOnly}`,
 				archived: `已收到并存档，编号 #${id}。这条链接不在你近期的解析记录里，所以不会排进自动重现。${droppedText}`,
+				limitedToday: `已收到并存档，编号 #${id}。今天全站送去自动重现的名额（${config.maxSentPerDay} 张）已经用完，这张只存档、不会排进自动重现；明天还有同样的问题可以再回报。${droppedText}`,
 			};
 			await interaction.reply(ephemeral(answers[outcome.kind]));
 			if (source === 'cmd') commandTokens.delete(ref);
@@ -467,6 +496,7 @@ module.exports = {
 	BUTTON_ID,
 	MODAL_PREFIX,
 	SYMPTOMS,
+	ARCHIVE_REASONS,
 	NOTE_MAX,
 	SCREENSHOT_MAX,
 	loadConfig,
