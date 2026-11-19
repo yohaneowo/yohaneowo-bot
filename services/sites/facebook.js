@@ -19,7 +19,8 @@ async function fetchFacebookVideo(url, dir, maxBytes, onStage) {
 // Photo/text posts: the link preview gives the author, text and first image.
 async function fetchFacebookPreview(url, dir, maxBytes, onStage) {
 	const meta = await fetchOpenGraph(url);
-	mediaLog.info(`link preview: title "${meta['og:title'] ?? ''}", image ${meta['og:image'] ? 'yes' : 'no'}`);
+	// Only the length of the page title: the log is read by the reproduction tooling, and page text stays out of it.
+	mediaLog.info(`link preview: title ${(meta['og:title'] ?? '').length} chars, image ${meta['og:image'] ? 'yes' : 'no'}`);
 	const author = meta['og:title'] ?? '';
 	const text = meta['og:description'] ?? '';
 	const imageUrl = meta['og:image'] ?? '';

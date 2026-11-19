@@ -291,6 +291,7 @@ async function fetchVideo(url, dir, maxBytes, onStage, options = {}) {
 		compressed,
 		// Raw yt-dlp metadata, for sites whose fields map differently (see instagram.js).
 		info: {
+			id: info.id,
 			uploader: info.uploader,
 			uploaderId: info.uploader_id,
 			channel: info.channel,

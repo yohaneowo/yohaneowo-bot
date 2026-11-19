@@ -40,7 +40,8 @@ async function fetchInstagramPost(url, dir, maxBytes, onStage) {
 	}
 
 	const meta = await fetchOpenGraph(url);
-	mediaLog.info(`link preview: title "${meta['og:title'] ?? ''}", image ${meta['og:image'] ? 'yes' : 'no'}`);
+	// Only the length of the page title: the log is read by the reproduction tooling, and page text stays out of it.
+	mediaLog.info(`link preview: title ${(meta['og:title'] ?? '').length} chars, image ${meta['og:image'] ? 'yes' : 'no'}`);
 	const { author, text } = parseInstagramMeta(meta);
 	const imageUrl = meta['og:image'] ?? '';
 	if (!author && !imageUrl) {

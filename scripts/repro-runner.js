@@ -68,6 +68,9 @@ async function measure(media) {
 		compressed: Boolean(media.compressed),
 		layer: media.layer ?? null,
 		stages: media.stages ?? [],
+		// The id of the video that was actually downloaded (yt-dlp's own id; versions before this field and the
+		// LinkHub route do not report one), to compare with the id in the link.
+		media_id: typeof media.info?.id === 'string' ? media.info.id : null,
 	};
 }
 

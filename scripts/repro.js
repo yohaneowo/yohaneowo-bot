@@ -22,6 +22,8 @@ const zlib = require('node:zlib');
 const { Readable, Transform } = require('node:stream');
 const { pipeline } = require('node:stream/promises');
 
+const { buildJudgeView } = require('./repro-view');
+
 const execFileAsync = promisify(execFile);
 
 const REPO_ROOT = path.join(__dirname, '..');
@@ -154,6 +156,64 @@ function extractContentId(url) {
 		if (match) return { id: match[1], source: 'link' };
 	}
 	return { id: null, source: 'unresolved' };
+}
+
+// Facebook share links (/share/r/<code>/, /share/v/<code>/, fb.watch/<code>) carry no reel id; the id is in
+// the address they redirect to. Only the Location headers are read (the page itself is never read), only
+// inside Facebook's own hosts, at most five hops, without cookies or login. The address itself is not kept:
+// only the id that matches the usual patterns. A login wall or any other host ends it as "unresolved".
+const SHARE_LINK = /^https?:\/\/(?:(?:www|m|web)\.)?(?:facebook\.com\/share\/|fb\.watch\/)/i;
+const FACEBOOK_HOSTS = new Set(['facebook.com', 'www.facebook.com', 'm.facebook.com', 'web.facebook.com', 'fb.watch']);
+const SHARE_MAX_HOPS = 5;
+const SHARE_TIMEOUT_MS = 10 * 1000;
+const SHARE_USER_AGENT = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Safari/537.36';
+
+async function resolveShareLink(url, { fetchImpl = fetch, maxHops = SHARE_MAX_HOPS, timeoutMs = SHARE_TIMEOUT_MS } = {}) {
+	if (!SHARE_LINK.test(url)) return null;
+	// A timer of its own (not AbortSignal.timeout, whose timer does not keep the process alive), cleared at the end.
+	const controller = new AbortController();
+	const timer = setTimeout(() => controller.abort(new Error('share link lookup timed out')), timeoutMs);
+	try {
+		return await followShareLink(url, { fetchImpl, maxHops, signal: controller.signal });
+	}
+	finally {
+		clearTimeout(timer);
+	}
+}
+
+async function followShareLink(url, { fetchImpl, maxHops, signal }) {
+	let current = url;
+	for (let hop = 1; hop <= maxHops; hop++) {
+		let response;
+		try {
+			response = await fetchImpl(current, { method: 'GET', redirect: 'manual', signal, headers: { 'user-agent': SHARE_USER_AGENT } });
+		}
+		catch {
+			return { id: null, source: 'unresolved', hops: hop - 1, reason: 'request failed' };
+		}
+		try {
+			await response.body?.cancel();
+		}
+		catch {
+			// The body is never read; a failed cancel changes nothing.
+		}
+		const location = response.status >= 300 && response.status < 400 ? response.headers.get('location') : null;
+		if (!location) return { id: null, source: 'unresolved', hops: hop - 1, reason: `no redirect (HTTP ${response.status})` };
+		let next;
+		try {
+			next = new URL(location, current);
+		}
+		catch {
+			return { id: null, source: 'unresolved', hops: hop, reason: 'bad redirect' };
+		}
+		if (!['http:', 'https:'].includes(next.protocol) || !FACEBOOK_HOSTS.has(next.hostname.toLowerCase())) {
+			return { id: null, source: 'unresolved', hops: hop, reason: 'redirect left Facebook' };
+		}
+		const found = extractContentId(next.href);
+		if (found.id) return { id: found.id, source: 'redirect', hops: hop };
+		current = next.href;
+	}
+	return { id: null, source: 'unresolved', hops: maxHops, reason: 'no reel id after the redirects' };
 }
 
 // Keeps only the whitelisted names of an environment dump (the NUL-separated text of /proc/<pid>/environ).
@@ -328,9 +388,8 @@ function tail(lines, count = REPORTED_LOG_LINES) {
 	return lines.slice(-count).map((line) => (line.length > REPORTED_LINE_LENGTH ? `${line.slice(0, REPORTED_LINE_LENGTH)}…` : line));
 }
 
-function buildReport({ options, siteName, version, childOutcome, elapsedMs, notes, timeoutSeconds = options.timeoutSeconds }) {
+function buildReport({ options, siteName, version, childOutcome, elapsedMs, notes, timeoutSeconds = options.timeoutSeconds, content = extractContentId(options.url) }) {
 	const analysis = analyzeLog(childOutcome.lines);
-	const content = extractContentId(options.url);
 	let result = null;
 	let error = null;
 	const reported = childOutcome.result;
@@ -353,7 +412,7 @@ function buildReport({ options, siteName, version, childOutcome, elapsedMs, note
 	const extraNotes = [...notes];
 	if (analysis.downloads.total > 1) extraNotes.push(`this run used ${analysis.downloads.total} downloads (counts against the per-ticket budget)`);
 	if (analysis.downloads.via_linkhub) extraNotes.push('at least one download went through LinkHub');
-	return {
+	const report = {
 		ok: Boolean(result),
 		measured: true,
 		url: options.url,
@@ -372,6 +431,16 @@ function buildReport({ options, siteName, version, childOutcome, elapsedMs, note
 		notes: extraNotes,
 		log_tail: tail(childOutcome.lines),
 	};
+	// What the judging agent may read (scripts/repro-view.js); built from every log line, not only the tail.
+	report.judge_view = buildJudgeView(report, childOutcome.lines);
+	return report;
+}
+
+// The report of a run that never measured anything (bad arguments, setup failure, watchdog), with its judge view.
+function scriptErrorReport(code, message) {
+	const report = { ok: false, measured: false, script_error: { code, message: String(message).slice(0, 400) } };
+	report.judge_view = buildJudgeView(report, []);
+	return report;
 }
 
 async function killTree(child) {
@@ -636,6 +705,7 @@ async function main(argv, deps = {}) {
 		stdout = process.stdout,
 		env = process.env,
 		fetchImpl,
+		shareFetchImpl,
 		statfs,
 		runnerPath,
 		loadMedia = () => require(path.join(REPO_ROOT, 'services', 'media.js')),
@@ -677,7 +747,7 @@ async function main(argv, deps = {}) {
 		watchdog = setTimeout(
 			onWatchdog ?? (() => {
 				emergencyCleanup();
-				print({ ok: false, measured: false, script_error: { code: 'WATCHDOG', message: 'the run did not finish in time and was stopped' } });
+				print(scriptErrorReport('WATCHDOG', 'the run did not finish in time and was stopped'));
 				process.exit(124);
 			}),
 			watchdogMs ?? (options.timeoutSeconds + WATCHDOG_EXTRA_SECONDS) * 1000,
@@ -699,6 +769,15 @@ async function main(argv, deps = {}) {
 			notes.push('LINKHUB_API_URL / LINKHUB_API_KEY were not found: only the local (non-LinkHub) route can run');
 		}
 
+		let content = extractContentId(options.url);
+		const shared = await resolveShareLink(options.url, { fetchImpl: shareFetchImpl ?? fetchImpl ?? fetch });
+		if (shared) {
+			content = shared;
+			notes.push(shared.id
+				? `share link: read the reel id from ${shared.hops} redirect(s) (no page content read, not a download)`
+				: `share link: reel id not found (${shared.reason}); the link is still run as given`);
+		}
+
 		const timeoutSeconds = Math.max(5, options.timeoutSeconds - Math.ceil((now() - startedAll) / 1000));
 		const started = now();
 		const childOutcome = await runChild({
@@ -713,18 +792,14 @@ async function main(argv, deps = {}) {
 			},
 		});
 		active.child = null;
-		const report = buildReport({ options, siteName: site.name, version, childOutcome, elapsedMs: now() - started, notes, timeoutSeconds });
+		const report = buildReport({ options, siteName: site.name, version, childOutcome, elapsedMs: now() - started, notes, timeoutSeconds, content });
 		if (keepStaging) report.notes.push(`staging directory kept: ${staging}`);
 		print(report, options.pretty);
 		return EXIT.OK;
 	}
 	catch (error) {
 		const known = error instanceof ScriptError;
-		print({
-			ok: false,
-			measured: false,
-			script_error: { code: known ? error.code : 'UNEXPECTED', message: String(error.message).slice(0, 400) },
-		}, options?.pretty);
+		print(scriptErrorReport(known ? error.code : 'UNEXPECTED', error.message), options?.pretty);
 		return known ? error.exitCode : EXIT.SETUP;
 	}
 	finally {
@@ -740,6 +815,8 @@ module.exports = {
 	parseArgs,
 	validateUrl,
 	extractContentId,
+	resolveShareLink,
+	scriptErrorReport,
 	buildChildEnv,
 	collectRedactions,
 	readBotEnviron,

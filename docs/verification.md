@@ -56,7 +56,7 @@
 | `services/sites/linkhub.js`                              | `test/linkhub-gif.test.js` 通过：GIF 优先、失败回退 mp4；LinkHub 空档改走本机解析重试一次                                 |
 | slash 指令（`/x`、「解析链接」）                         | 改了指令定义要提醒跑 `npm run deploy:dev`（只注册到测试 bot）；真实入口截图由 Tess／老板在测试 bot 上验，开发者不自己登入 |
 | `services/sites/chain.js`、`deadline.js`、`video.js`（yt-dlp 参数）、`linkhub.js` 下载 | 空影片自动重试契约（下）：`test/fallback-chain.test.js`、`media-post.test.js`、`ytdlp-args.test.js`、`linkhub-multi-item.test.js`、`line-busy.test.js` 通过，**加上 dev 容器里跑 `test/ytdlp-stub.test.js` 的输出**（假 yt-dlp 的独立子进程测试） |
-| `scripts/repro.js`、`scripts/repro-runner.js` | `test/repro.test.js` 通过，并在 dev 容器里用真实链接对 `--ref current` 与至少一个旧 SHA 各跑一次，贴出 JSON（密钥值不得出现在输出里）；这支脚本不能改成会上传、会读 `index.js` 或会带出环境变量 |
+| `scripts/repro.js`、`scripts/repro-runner.js`、`scripts/repro-view.js`、`scripts/repro-check.js` | `test/repro.test.js`、`test/repro-view.test.js`、`test/repro-check.test.js` 通过，并在 dev 容器里用真实链接对 `--ref current` 与至少一个旧 SHA 各跑一次，贴出 JSON（密钥值不得出现在输出里）；这支脚本不能改成会上传、会读 `index.js` 或会带出环境变量 |
 | `services/botReport.js`、`botReportStore.js`、`openbotWebhook.js`、`commands/utility/report*.js`、`services/mediaPost.js` 的记录与按钮 | 回报功能契约（上）：`test/bot-report.test.js`、`test/media-post-report.test.js`、`test/magnet-relay.test.js`（共用签章）通过；功能默认关，别在没批准的情况下把两个环境变量设进 Doppler |
 
 ### 空影片契约（`test/empty-file.test.js` 已覆盖）
@@ -102,7 +102,9 @@ node scripts/repro.js <链接> --ref <SHA|current> [--max-bytes N] [--timeout �
 | `version_sha`、`version_source` | 实际跑的版本（完整 SHA；`git`／`github`／`current`）。从 GitHub 读不到完整 SHA 时是你给的那个，`notes` 会说明 |
 | `result.bytes_total`、`result.duration_sec`、`result.files[]` | 字节数、秒数（ffprobe 读的）、每个档案的名称／字节／长度／编码 |
 | `result.layer`、`result.layer_source` | 哪一层交的档：新版本由 bot 自己回报（`reported`），旧版本从日志推断（`inferred`，只能分出 `linkhub`／`local`） |
-| `content_id` | 链接里看得到的影片或贴文 ID；短链和分享码（b23.tv、fb.watch、`/share/`……）不展开，是 `null` |
+| `content_id`、`content_id_source` | 影片或贴文 ID：`link`＝链接里看得到；`redirect`＝Facebook 分享连结（`facebook.com/share/…`、`fb.watch/…`）跟随跳转读到的 reel ID（只读跳转头、不读页面、不登录、只在 Facebook 自家网域内、最多 5 跳、10 秒；不算下载次数）；`unresolved`＝读不到（其他短链如 b23.tv 仍不展开） |
+| `result.media_id` | 实际下载到的影片 ID（yt-dlp 自己的 id；这个栏位之前的旧版本和 LinkHub 那条路没有，是 `null`） |
+| `judge_view` | 给判定者看的那一份，见下方「判定视图」 |
 | `downloads` | 这一次实际下载了几次：`linkhub`、`ytdlp`、`direct`、`total`，`via_linkhub` 标出有没有走 LinkHub；`linkhub_parses` 是 LinkHub 解析次数（不是下载）。重现师每张单最多 4 次下载，这里的 `total` 就是这一次的花费 |
 | `elapsed_ms`、`error`、`notes`、`log_tail` | 耗时、失败原因、提醒、最后 30 行 bot 日志（已脱敏） |
 
@@ -116,7 +118,26 @@ docker exec -u node -w /app <dev 的 portfolio-bot 容器> node scripts/repro.js
 
 - **不要用 `doppler run`**：脚本自己从 bot 主进程（`node index.js`，工作目录就是这个 repo）按名字只拷 `LINKHUB_API_URL`、`LINKHUB_API_KEY` 两个变量；`DOPPLER_TOKEN`、`TOKEN`（bot token）、admin、webhook 等一律不拷，也不会传给被量测的版本。在 Coolify 容器里这两个变量只在 bot 进程里，PID 1（docker-init）没有它们，只有 `DOPPLER_TOKEN`；脚本也会先看 PID 1，但只认这两个名字。
 - 输出里交给被量测版本的每一个环境变量的值（不只 LinkHub 两个；短于 4 个字的值除外，否则会把输出弄乱）都会被替换成 `[redacted]`；脚本不印环境、不加载 `index.js` 或 `discord.js`，不可能登入 Discord。被量测的版本在子进程里跑，只拿到 `PATH`、yt-dlp／ffmpeg／ffprobe 的路径、`XHS_API_URL` 和上面两个变量，临时目录指向暂存目录。
-- 限制：只比对「交档的是哪一层」，不能指定只走某一层；`content_id` 只来自链接本身，所以 Facebook 分享连结「跳转后的 reel ID」目前量不到；旧版本的 `layer` 是推断的。
+- 限制：只比对「交档的是哪一层」，不能指定只走某一层；旧版本的 `layer` 是推断的；`id_match` 只有在两边 ID 都拿得到时才有值（LinkHub 交的档、旧版本是 `null`）；分享连结的跳转在未登录时是否稳定给出 reel 网址，还没用真实分享连结验过。
+
+#### 判定视图 `judge_view`（`scripts/repro-view.js`，方案 D）
+
+`repro.js` 的输出多一个 `judge_view`：判定者（重现师）只读这一份，完整输出（含 `log_tail`、错误原文、档名）留给抽查。原则是**白名单、重建，不是遮**：
+
+- 每个栏位都是数字、固定词或符合严格格式的 ID：`ok`、`measured`、`timed_out`、`error_code`（只收 `^[A-Z][A-Z0-9_]{0,39}$`，否则 `OTHER`；**不带** `error.message`／`detail`）、`tried`、`site`（bot 的 8 个站名之一）、`requested_ref`、`version_sha`、`version_source`、`bytes_total`、`duration_sec`、`files[]`（只有字节、秒数、宽高、编码，**不带档名**）、`compressed`、`layer`、`layer_source`、`stages`、`downloads`、`elapsed_ms`、`content_id`、`content_id_source`、`media_id`、`id_match`（`true`／`false`；任一边没有 ID 时 `null`）。
+- `log_lines`：只保留能对上 bot 固定日志模板的行，并用模板里验过的数字与固定词**重新拼出来**（不是复制原行）；带外来文字的部分换成固定标记（`[message omitted]`、`[host]`、`title [omitted]`、`note [omitted]`），对不上的整行丢掉，只计数在 `log_lines_dropped`。最多 30 行。开始那行（含使用者贴的链接）一律丢掉。
+- 网页标题：`services/sites/facebook.js`、`instagram.js` 现在只记标题长度（`link preview: title 37 chars, image yes`）；旧版本的日志仍有标题，所以第二道防线是上面的模板重建。
+- 没能开始量测（参数错、磁盘不足、看门狗）时也有 `judge_view`（`measured: false`，`error_code` 是脚本的固定代码）。
+
+#### 核对脚本 `scripts/repro-check.js`（只读、不连网）
+
+```
+node scripts/repro-check.js <event.json> --feedback <feedback.json> --pubkey <公钥> [--seen <已见 exec_id 档>] [--originals <主机原件目录>] [--ticket-created <ISO>] [--now <ISO>]
+```
+
+对一份 `bot.repro_result` 逐条核对，输出每条规则与结论：`judge`（可判定，退出码 0）、`wait`（规则都过但还没跑完，2）、`reject`（有一条不过，不能用，1）、参数错 64。规则：类型与 `schema`（`repro_result/1`）；① Ed25519 验 `sign`（`key_id` 默认 `repro-results-1`，签的是去掉 `sign` 的 `data` 的规范 JSON：键排序、无空白；公钥可给 SPKI PEM、OpenSSH `ssh-ed25519` 一行或 32 字节 base64）；② 单号、`ticket_key`、链接、出事版本和那张 `bot.feedback_report` 对得上；③ 按 slot 核对（`initial` 1–4、`verify` 1–2，各恰一笔 `retry: false`；首次 `rc` 124 或 3 才可再有一笔 `retry: true`，`retry_of` 指回首次，不顶替；每笔的 `judge_view.requested_ref` 和外层一致）；④ 实际版本以请求版本开头，`current` 的等于 `current_sha`；⑤ `exec_id` 是 ULID、不重复、不在 `--seen` 里；⑥ 时间有时区、先后正确、不在未来、7 天内、不早于建单，重试晚于首次结束；⑦ 状态。给 `--originals` 时再逐笔比对主机原件的 sha256 与原件里的 `judge_view`。
+
+事件 `data` 的形状（dispatch 产生，见 `C:\Users\USER\OpenBot\Shared\repro-direct-run-design\`）：`schema`、`ticket_key`、`report_id`、`phase`、`status`、`requested_url`、`incident_ref`、`verify_ref`（只有 verify）、`current_sha`、`manifest_sha256`、`runs[]`（每笔 `exec_id`、`slot`、`retry`、`retry_of`、`requested_ref`、`started_at`、`finished_at`、`rc`、`run_sha256`、`judge_view`＝`repro.js` 印出的原样）、`sign`。重现师跑不了 node 时照第 2–7 条人工比对；签章那条由抽查人用本脚本验。
 
 ### 回报 bot 问题（`services/botReport.js`，第一期：只收件）
 

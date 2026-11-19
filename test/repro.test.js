@@ -379,7 +379,7 @@ module.exports = {
 		const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'media-'));
 		const file = path.join(dir, 'video.mp4');
 		fs.writeFileSync(file, Buffer.alloc(12345, 1));
-		return { files: [{ path: file, name: 'video.mp4' }], compressed: false, layer: 'local', site: 'YouTube', cleanup: async () => fs.rmSync(dir, { recursive: true, force: true }) };
+		return { files: [{ path: file, name: 'video.mp4' }], compressed: false, layer: 'local', site: 'YouTube', info: { id: 'HPawwstzIU0' }, cleanup: async () => fs.rmSync(dir, { recursive: true, force: true }) };
 	},
 };
 `;
@@ -478,6 +478,51 @@ test('every environment value handed to the version is kept out of the output, n
 	}
 	assert.match(json.log_tail.join('\n'), /debug: ytdlp=\[redacted\] xhs=\[redacted\] lang=C/, 'a value shorter than four characters is left alone');
 	assert.deepEqual(collectRedactions({ A: 'abc', B: 'abcd', C: 'abcdef', D: undefined, E: '', F: 'abcd' }), ['abcdef', 'abcd']);
+});
+
+test('the output carries the judge view: fixed fields only, and none of the debug lines or secrets of the run', async () => {
+	const { repo } = makeRepo();
+	const { json, out } = await runMain([URL_A, '--ref', 'current', '--min-free-mb', '0'], { repo, stagingRoot: newStagingRoot() });
+	const view = json.judge_view;
+	assert.equal(view.schema, 'judge_view/1');
+	assert.deepEqual([view.ok, view.measured, view.bytes_total, view.layer, view.content_id, view.content_id_source], [true, true, 12345, 'local', 'HPawwstzIU0', 'link']);
+	assert.deepEqual([json.result.media_id, view.media_id, view.id_match], ['HPawwstzIU0', 'HPawwstzIU0', true], 'the id of the downloaded video comes from the version itself');
+	assert.deepEqual(view.log_lines, [
+		'[YouTube +0.1s] LinkHub: youtube via cobalt, 1 item(s)',
+		'[YouTube +0.2s] downloaded 0 KB via LinkHub (HTTP 200, content-length 0, 0 bytes)',
+		'[YouTube +0.3s] running yt-dlp',
+		'[YouTube +0.4s] recovered by local after linkhub came back empty',
+	]);
+	assert.ok(view.log_lines_dropped >= 5, 'the debug lines are left out');
+	assert.equal(JSON.stringify(view).includes('debug'), false);
+	assert.equal(out.text().includes(KEY), false);
+});
+
+test('a Facebook share link: the reel id comes from the redirects and the run is still made with the link as given', async () => {
+	const { repo } = makeRepo();
+	const share = 'https://www.facebook.com/share/r/AbCdEf/';
+	const asked = [];
+	const shareFetchImpl = async (url) => {
+		asked.push(url);
+		return { status: 302, headers: new Headers({ location: 'https://www.facebook.com/reel/858979257261500/?s=1' }), body: null };
+	};
+	const { json } = await runMain([share, '--ref', 'current', '--min-free-mb', '0'], {
+		repo,
+		stagingRoot: newStagingRoot(),
+		shareFetchImpl,
+		loadMedia: () => ({ findSupportedSite: () => ({ name: 'Facebook' }) }),
+	});
+	assert.deepEqual(asked, [share]);
+	assert.deepEqual([json.url, json.content_id, json.content_id_source], [share, '858979257261500', 'redirect']);
+	assert.deepEqual([json.judge_view.content_id, json.judge_view.content_id_source], ['858979257261500', 'redirect']);
+	assert.ok(json.notes.some((note) => /read the reel id from 1 redirect/.test(note)));
+});
+
+test('a run that fails before measuring still prints a judge view with a fixed code', async () => {
+	const { repo } = makeRepo();
+	const { code, json } = await runMain([URL_A, '--ref', 'current', '--min-free-mb', '500'], { repo, stagingRoot: newStagingRoot(), statfs: () => ({ bavail: 1, bsize: 1 }) });
+	assert.equal(code, EXIT.SETUP);
+	assert.deepEqual([json.judge_view.measured, json.judge_view.error_code, json.judge_view.log_lines], [false, 'LOW_DISK', []]);
 });
 
 test('without the LinkHub settings the run still happens and says so', async () => {
