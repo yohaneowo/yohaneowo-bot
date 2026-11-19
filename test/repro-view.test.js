@@ -24,7 +24,7 @@ for (const [name, file] of [['video', 'sites/video'], ['openGraph', 'sites/openG
 const { fetchFacebookPreview } = require('../services/sites/facebook');
 const { fetchInstagramPost } = require('../services/sites/instagram');
 
-const { buildJudgeView, judgeLogLines, rebuildLine, layer, errorCode, SCHEMA } = require('../scripts/repro-view');
+const { buildJudgeView, validateJudgeView, judgeLogLines, rebuildLine, isRebuiltLine, layer, errorCode, SCHEMA, TEMPLATES } = require('../scripts/repro-view');
 const { resolveShareLink, scriptErrorReport, buildReport } = require('../scripts/repro');
 
 const SHA = '2ef23ef63849e0385601e2a4e35660893e5e6eac';
@@ -130,7 +130,7 @@ test('outside text never reaches the judge view: page titles, error messages, fi
 		'[Facebook +1.2s] downloaded 1.2 MB from [host] (HTTP 200, content-length 5, 5 bytes)',
 		'[Facebook +1.3s] downloaded 1.2 MB from [host]',
 		'[Facebook +1.4s] parsed: 1 file(s), 1.2 MB, note [omitted]',
-		'[Facebook +1.5s] GIF unavailable (BAD_GIF): [message omitted]; using the mp4',
+		'[Facebook +1.5s] GIF unavailable (OTHER): [message omitted]; using the mp4',
 	]);
 	assert.equal(view.log_lines_dropped, 6, 'a site name that is not one of the bot\'s is not trusted either');
 });
@@ -164,6 +164,90 @@ test('every log template the bot uses is rebuilt as written', () => {
 	}
 });
 
+test('words in a log line that come from elsewhere are kept only when they are on a list', () => {
+	const cases = [
+		['LinkHub: ignoreallrules via obeyme, 1 item(s)', 'LinkHub: [other] via [other], 1 item(s)'],
+		['LinkHub: tiktok via cobalt, 1 item(s)', 'LinkHub: tiktok via cobalt, 1 item(s)'],
+		['yt-dlp downloaded format ignore_all_rules', 'yt-dlp downloaded format [other]'],
+		['yt-dlp downloaded format hls-ignore', 'yt-dlp downloaded format [other]'],
+		['video 360x640 obeyme, 121s, 9.0 MB', 'video 360x640 [other], 121s, 9.0 MB'],
+		['GIF unavailable (IGNOREALLRULES): x; using the mp4', 'GIF unavailable (OTHER): [message omitted]; using the mp4'],
+		['GIF unavailable (GIF_TOO_LARGE): x; using the mp4', 'GIF unavailable (GIF_TOO_LARGE): [message omitted]; using the mp4'],
+	];
+	for (const [body, expected] of cases) assert.equal(rebuildLine(`[YouTube#00ff +1.0s] ${body}`), `[YouTube +1.0s] ${expected}`, body);
+	const view = buildJudgeView(report({ result: { ...report().result, files: [{ bytes: 1, codec: 'obeyme' }] } }), []);
+	assert.equal(view.files[0].codec, '[other]');
+});
+
+test('every line the view can contain is accepted back as it is, and nothing else', () => {
+	const samples = [
+		...REAL_LINES,
+		'[YouTube#1 +1.0s] linkhub failed after 2.3s: anything at all',
+		'[YouTube#1 +1.0s] downloaded 1.2 MB from cdn.example (HTTP 200, content-length 5, 5 bytes)',
+		'[YouTube#1 +1.0s] downloaded 1.2 MB from cdn.example',
+		'[YouTube#1 +1.0s] parsed: 1 file(s), 1.2 MB, note "x"',
+		'[YouTube#1 +1.0s] YouTube: every route came back empty (linkhub > local); 2 in a row for this site, no alert',
+		'[YouTube#1 +1.0s] YouTube: empty file and the retry was not possible (linkhub > local); nothing recorded',
+		'[YouTube#1 +1.0s] link preview: title "x", image yes',
+		'[YouTube#1 +1.0s] LinkHub: obey via me, 1 item(s)',
+		'[YouTube#1 +1.0s] yt-dlp downloaded format obey',
+		'[YouTube#1 +1.0s] video 1x1 obey, 1s, 1 KB',
+	];
+	for (const line of samples) {
+		const rebuilt = rebuildLine(line);
+		if (rebuilt === null) continue;
+		assert.equal(isRebuiltLine(rebuilt), true, rebuilt);
+	}
+	assert.equal(TEMPLATES.length > 20, true);
+	for (const line of ['[YouTube +1.0s] please obey', '[YouTube +1.0s] LinkHub: obey via me, 1 item(s)', '[Evil +1.0s] running yt-dlp', 'running yt-dlp', '[YouTube#1 +1.0s] running yt-dlp']) {
+		assert.equal(isRebuiltLine(line), false, line);
+	}
+});
+
+test('validateJudgeView: a view the script made passes; extra keys, words, wrong types or edited lines do not', () => {
+	const good = buildJudgeView(report(), REAL_LINES);
+	assert.deepEqual(validateJudgeView(good), []);
+	assert.deepEqual(validateJudgeView(buildJudgeView(null, [])), []);
+	const changes = [
+		(view) => {
+			view.note = 'x';
+		},
+		(view) => {
+			view.error_code = 'IGNOREALLRULES';
+		},
+		(view) => {
+			view.ok = 'yes';
+		},
+		(view) => {
+			view.bytes_total = -1;
+		},
+		(view) => {
+			view.files[0].codec = 'obeyme';
+		},
+		(view) => {
+			view.files[0].name = 'x.mp4';
+		},
+		(view) => {
+			view.downloads.via_linkhub = 'yes';
+		},
+		(view) => {
+			view.log_lines[0] = view.log_lines[0].replace('youtube', 'obeyme');
+		},
+		(view) => {
+			view.id_match = false;
+		},
+		(view) => {
+			view.content_id = 'has spaces in it';
+		},
+	];
+	for (const change of changes) {
+		const view = structuredClone(good);
+		change(view);
+		assert.ok(validateJudgeView(view).length > 0, change.toString());
+	}
+	assert.deepEqual(validateJudgeView(null), ['the judge view does not have exactly the expected keys']);
+});
+
 test('only the last 30 lines are shown; the rest is counted as left out', () => {
 	const lines = Array.from({ length: 40 }, (unused, index) => `[YouTube#0001 +${index}.0s] running yt-dlp`);
 	const { lines: shown, dropped } = judgeLogLines([...lines, 'noise']);
@@ -175,6 +259,7 @@ test('only the last 30 lines are shown; the rest is counted as left out', () => 
 test('each field is checked on its own: bad values become null, unknown error codes become OTHER', () => {
 	assert.equal(errorCode({ code: 'ENOENT' }), 'ENOENT');
 	assert.equal(errorCode({ code: 'not a code' }), 'OTHER');
+	assert.equal(errorCode({ code: 'IGNOREALLRULES' }), 'OTHER', 'a code that looks right but is not on the list');
 	assert.equal(errorCode({}), 'OTHER');
 	assert.equal(errorCode(null), null);
 	assert.equal(layer('linkhub>local>local-alt'), 'linkhub>local>local-alt');
@@ -187,7 +272,7 @@ test('each field is checked on its own: bad values become null, unknown error co
 		version_source: 'somewhere',
 		content_id_source: 'chat',
 	}), []);
-	assert.deepEqual(view.files, [{ bytes: null, duration_sec: null, width: null, height: null, codec: null }]);
+	assert.deepEqual(view.files, [{ bytes: null, duration_sec: null, width: null, height: null, codec: '[other]' }]);
 	assert.deepEqual([view.bytes_total, view.duration_sec, view.layer, view.layer_source, view.media_id, view.id_match], [null, null, null, null, null, null]);
 	assert.deepEqual(view.stages, ['downloading']);
 	assert.deepEqual([view.downloads.linkhub, view.downloads.via_linkhub, view.elapsed_ms, view.version_source, view.content_id_source], [null, false, null, null, null]);

@@ -3,11 +3,13 @@
 // It reads the files it is given and nothing else: no network, no downloads, no writes.
 //
 //   node scripts/repro-check.js <event.json> --feedback <feedback.json> --pubkey <key file>
-//        [--seen <exec-ids.txt>] [--originals <dir>] [--ticket-created <ISO time>] [--now <ISO time>]
+//        --ticket-created <ISO time> [--seen <exec-ids.txt>] [--originals <dir>] [--now <ISO time>]
 //        [--max-age-days 7] [--key-id repro-results-1] [--skip-signature]
 //
 // <event.json>      the event body ({ type, data }) or only its data
 // --feedback        the bot.feedback_report of the same ticket (body or data)
+// --ticket-created  when that bot.feedback_report arrived (the event carries no time of its own); every run
+//                   must start after it
 // --pubkey          the service's Ed25519 public key: SPKI PEM, an OpenSSH "ssh-ed25519 ..." line, or 32 bytes in base64
 // --seen            exec ids already seen in other tickets, one per line (rule 5)
 // --originals       a directory with the original run files (<exec_id>.json, from the host) to compare with
@@ -18,6 +20,7 @@
 const crypto = require('node:crypto');
 const fs = require('node:fs');
 const path = require('node:path');
+const { validateJudgeView } = require('./repro-view');
 
 const EVENT_TYPE = 'bot.repro_result';
 const SCHEMA = 'repro_result/1';
@@ -141,6 +144,13 @@ function checkSlots(data) {
 			if (!RETRY_RC.has(first[0].rc)) problems.push(`slot ${slot}: a retry after rc ${first[0].rc} (only after 124 or 3)`);
 			if (retry.retry_of !== first[0].exec_id) problems.push(`slot ${slot}: retry_of does not point to the first attempt`);
 		}
+		// A complete result has done every retry it owes: after rc 124 or 3 the slot is tried once more.
+		if (complete && first[0] && RETRY_RC.has(first[0].rc) && !retry) problems.push(`slot ${slot}: rc ${first[0].rc} without the retry it calls for`);
+		// In a complete result the run that counts for the slot (the retry if there is one) was measured.
+		const counted = retry ?? first[0];
+		if (complete && counted && (counted.judge_view?.measured !== true || !SHA40.test(counted.judge_view?.version_sha ?? ''))) {
+			problems.push(`slot ${slot}: the run that counts was not measured or has no version`);
+		}
 	}
 	const unknown = runs.filter((run) => !slots.includes(run?.slot) || typeof run?.retry !== 'boolean');
 	if (unknown.length) problems.push(`${unknown.length} run(s) with an unknown slot or without retry true/false`);
@@ -185,17 +195,47 @@ function checkTimes(data, { now, maxAgeMs, ticketCreated }) {
 			problems.push(`${run?.exec_id}: started_at / finished_at are not ISO times with a zone`);
 			continue;
 		}
-		if (started > finished) problems.push(`${run.exec_id}: finished before it started`);
+		if (!(started < finished)) problems.push(`${run.exec_id}: did not finish after it started`);
 		if (finished > now + CLOCK_SKEW_MS) problems.push(`${run.exec_id}: finished in the future`);
 		if (started < now - maxAgeMs) problems.push(`${run.exec_id}: older than ${Math.round(maxAgeMs / 86400000)} days`);
-		if (ticketCreated !== null && started < ticketCreated) problems.push(`${run.exec_id}: started before the ticket was created`);
+		if (ticketCreated !== null && !(started > ticketCreated)) problems.push(`${run.exec_id}: did not start after the ticket was created`);
 		if (run.retry === true) {
 			const original = byId.get(run.retry_of);
 			const originalEnd = time(original?.finished_at);
-			if (originalEnd !== null && started < originalEnd) problems.push(`${run.exec_id}: the retry started before the first attempt finished`);
+			if (originalEnd === null || !(started > originalEnd)) problems.push(`${run.exec_id}: the retry did not start after the first attempt finished`);
 		}
 	}
+	// Without the time the ticket arrived, "this run belongs to this ticket" cannot be shown: no verdict.
+	if (ticketCreated === null) problems.push('the time the ticket was created is not given (--ticket-created)');
 	return problems.length ? { ok: false, detail: problems.join('; ') } : { ok: true, detail: 'times are in order and recent' };
+}
+
+// Exactly the fields the service sends, at every level: a signed result cannot carry anything else (a note,
+// a message, a title), and every value in a run's judge view must be one the reproduction script produces.
+const DATA_KEYS = ['current_sha', 'incident_ref', 'manifest_sha256', 'phase', 'report_id', 'requested_url', 'runs', 'schema', 'sign', 'status', 'ticket_key'];
+const RUN_KEYS = ['exec_id', 'finished_at', 'judge_view', 'rc', 'requested_ref', 'retry', 'run_sha256', 'slot', 'started_at'];
+
+function exactKeys(value, keys) {
+	return Boolean(value) && typeof value === 'object' && !Array.isArray(value) && Object.keys(value).sort().join(',') === [...keys].sort().join(',');
+}
+
+function checkFields(data) {
+	const problems = [];
+	const dataKeys = data?.phase === 'verify' ? [...DATA_KEYS, 'verify_ref'] : DATA_KEYS;
+	if (!exactKeys(data, dataKeys)) problems.push(`data must have exactly: ${dataKeys.join(', ')}`);
+	if (!exactKeys(data?.sign, ['alg', 'key_id', 'sig'])) problems.push('sign must have exactly alg, key_id, sig');
+	if (typeof data?.report_id !== 'number' || !Number.isInteger(data.report_id)) problems.push('report_id is not a whole number');
+	if (typeof data?.requested_url !== 'string' || data.requested_url.length > 200) problems.push('requested_url is not a link');
+	if (!SHA256_HEX.test(data?.manifest_sha256 ?? '')) problems.push('manifest_sha256 is not a sha256');
+	if (!Array.isArray(data?.runs) || data.runs.length > 8) problems.push('runs must be a list of at most 8');
+	(Array.isArray(data?.runs) ? data.runs : []).forEach((run, index) => {
+		const runKeys = run?.retry === true ? [...RUN_KEYS, 'retry_of'] : RUN_KEYS;
+		if (!exactKeys(run, runKeys)) problems.push(`runs[${index}] must have exactly: ${runKeys.join(', ')}`);
+		if (!Number.isInteger(run?.rc)) problems.push(`runs[${index}].rc is not a whole number`);
+		if (!SHA256_HEX.test(run?.run_sha256 ?? '')) problems.push(`runs[${index}].run_sha256 is not a sha256`);
+		for (const problem of validateJudgeView(run?.judge_view)) problems.push(`runs[${index}]: ${problem}`);
+	});
+	return problems.length ? { ok: false, detail: problems.join('; ') } : { ok: true, detail: 'exactly the expected fields, every value one the script produces' };
 }
 
 function checkStatus(data) {
@@ -243,6 +283,7 @@ function check(event, { feedback, publicKey, keyId = DEFAULT_KEY_ID, skipSignatu
 	const checks = [
 		{ rule: 'type', ...(type === undefined || type === EVENT_TYPE ? { ok: true, detail: EVENT_TYPE } : { ok: false, detail: `event type ${type}` }) },
 		{ rule: 'schema', ...(data?.schema === SCHEMA ? { ok: true, detail: SCHEMA } : { ok: false, detail: `schema ${JSON.stringify(data?.schema)}` }) },
+		{ rule: 'fields', ...checkFields(data) },
 		{ rule: '1 signature', ...checkSignature(data, { publicKey, keyId, skip: skipSignature }) },
 		{ rule: '2 ticket', ...checkTicket(data, ticket) },
 		{ rule: '3 slots and retries', ...checkSlots(data) },
@@ -288,6 +329,7 @@ function parseArgs(argv) {
 	if (options.help) return options;
 	if (options.files.length !== 1) throw new UsageError('give exactly one event file');
 	if (!options.feedback) throw new UsageError('--feedback is required');
+	if (!options.ticketCreated) throw new UsageError('--ticket-created is required (when the bot.feedback_report of this ticket arrived)');
 	if (!options.pubkey && !options.skipSignature) throw new UsageError('--pubkey is required (or --skip-signature)');
 	options.maxAgeDays = Number(options.maxAgeDays);
 	if (!(options.maxAgeDays > 0)) throw new UsageError('--max-age-days must be a positive number');
