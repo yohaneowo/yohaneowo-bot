@@ -266,7 +266,54 @@ function validateJudgeView(view) {
 	expect(view.id_match === idMatch(view.content_id, view.media_id), 'id_match');
 	expect(Array.isArray(view.log_lines) && view.log_lines.length <= MAX_LOG_LINES && view.log_lines.every(isRebuiltLine), 'log_lines');
 	expect(count(view.log_lines_dropped) !== null, 'log_lines_dropped');
-	return problems.map((key) => `judge_view.${key} is not a value the reproduction script produces`);
+	if (problems.length) return problems.map((key) => `judge_view.${key} is not a value the reproduction script produces`);
+	return crossFieldProblems(view).map((what) => `judge_view: ${what}, which the reproduction script never produces`);
+}
+
+// Combinations of fields that scripts/repro.js cannot produce together (see buildReport and scriptErrorReport):
+// each value on its own can be valid while the view as a whole is not.
+function crossFieldProblems(view) {
+	const problems = [];
+	const expect = (ok, what) => {
+		if (!ok) problems.push(what);
+	};
+	const resultFields = [view.bytes_total, view.duration_sec, view.compressed, view.layer, view.layer_source, view.media_id];
+	const downloads = view.downloads;
+	expect(view.timed_out === (view.error_code === 'REPRO_TIMEOUT'), 'timed_out disagrees with error_code');
+	if (view.ok) {
+		// A delivered file: measured, no error, a result.
+		expect(view.measured, 'ok without being measured');
+		expect(view.error_code === null && view.tried === null, 'ok with an error');
+		expect(view.compressed !== null && view.layer_source !== null && view.bytes_total !== null, 'ok without a result');
+	}
+	else {
+		// No file: an error says why, and there is no result.
+		expect(view.error_code !== null, 'a failure without an error code');
+		expect(resultFields.every((value) => value === null) && view.files.length === 0 && view.stages.length === 0, 'a failure with a result');
+	}
+	if (view.measured) {
+		expect(view.site !== null && view.requested_ref !== null && view.version_sha !== null && view.version_source !== null, 'a measurement without its site or version');
+		expect((view.version_source === 'current') === (view.requested_ref === 'current'), 'version_source disagrees with requested_ref');
+		expect(view.content_id_source !== null, 'a measurement without content_id_source');
+		expect(['linkhub', 'ytdlp', 'direct', 'total', 'linkhub_parses'].every((key) => downloads[key] !== null) && view.elapsed_ms !== null, 'a measurement without its counts');
+	}
+	else {
+		// The run never started (bad arguments, setup failure, watchdog): nothing but the code and the ref.
+		expect(!view.ok && !view.timed_out, 'an unmeasured run that delivered or timed out');
+		expect(view.site === null && view.version_sha === null && view.version_source === null && view.content_id === null &&
+			view.content_id_source === null && view.elapsed_ms === null && view.log_lines.length === 0 && view.log_lines_dropped === 0,
+		'an unmeasured run with measurement details');
+		expect(['linkhub', 'ytdlp', 'direct', 'total', 'linkhub_parses'].every((key) => downloads[key] === null) && !downloads.via_linkhub, 'an unmeasured run with download counts');
+	}
+	if (view.content_id !== null) expect(view.content_id_source === 'link' || view.content_id_source === 'redirect', 'a content_id that was not resolved');
+	if (downloads.linkhub !== null && downloads.ytdlp !== null && downloads.direct !== null && downloads.total !== null) {
+		expect(downloads.total === downloads.linkhub + downloads.ytdlp + downloads.direct, 'download counts that do not add up');
+		expect(downloads.via_linkhub === downloads.linkhub > 0, 'via_linkhub disagrees with the LinkHub count');
+	}
+	if (view.files.length > 0 && view.files.length < 10 && view.bytes_total !== null && view.files.every((file) => file.bytes !== null)) {
+		expect(view.bytes_total === view.files.reduce((sum, file) => sum + file.bytes, 0), 'bytes_total is not the sum of the files');
+	}
+	return problems;
 }
 
 module.exports = {

@@ -95,7 +95,7 @@ test('a correct, signed, complete initial result: every rule passes and the verd
 test('rule 1: a changed field, another key, a wrong key id or a missing signature is rejected', () => {
 	const { body } = event();
 	const changed = structuredClone(body);
-	changed.data.runs[0].judge_view.bytes_total = 9020128;
+	changed.data.runs[0].judge_view.elapsed_ms = 1234;
 	assert.deepEqual(failed(verdictOf(changed)), ['1 signature']);
 	const other = crypto.generateKeyPairSync('ed25519').publicKey;
 	assert.deepEqual(failed(verdictOf(body, { publicKey: other })), ['1 signature']);
@@ -221,7 +221,7 @@ test('--originals: every run is compared with its original file on the host, byt
 	// The view sent in the event differs from the one in the untouched original (and the event was re-signed):
 	// only the comparison with the original shows it.
 	const edited = structuredClone(body);
-	edited.data.runs[0].judge_view.bytes_total = 9020128;
+	edited.data.runs[0].judge_view.elapsed_ms = 1234;
 	edited.data = sign(edited.data);
 	assert.deepEqual(failed(verdictOf(edited)), []);
 	assert.deepEqual(failed(verdictOf(edited, { originals: dir })), ['originals']);
@@ -334,7 +334,7 @@ test('a complete result owes the retry after rc 124 or 3; only a partial one may
 });
 
 test('in a complete result the run that counts for each slot was measured and has its version', () => {
-	const unmeasured = (entry) => ({ ...entry, judge_view: view(entry.requested_ref, null, { measured: false, ok: false, result: null }) });
+	const unmeasured = (entry) => ({ ...entry, judge_view: buildJudgeView({ ok: false, measured: false, ref: entry.requested_ref, script_error: { code: 'LOW_DISK' } }, []) });
 	const result = verdictOf(event({ runs: initialRuns().map(unmeasured) }).body);
 	assert.equal(result.verdict, 'reject');
 	assert.match(result.checks.find((entry) => entry.rule === '3 slots and retries').detail, /not measured or has no version/);
@@ -343,6 +343,35 @@ test('in a complete result the run that counts for each slot was measured and ha
 	runs[0] = unmeasured({ ...runs[0], rc: 3 });
 	const retry = run(1, INCIDENT, INCIDENT_SHA, 5, { retry: true, retry_of: runs[0].exec_id });
 	assert.equal(verdictOf(event({ runs: [...runs, retry] }).body).verdict, 'judge');
+});
+
+test('a signed result whose view combines fields the script never combines is rejected (the signature is valid)', () => {
+	const impossible = [
+		(shown) => {
+			shown.timed_out = true;
+		},
+		(shown) => {
+			shown.ok = false;
+		},
+		(shown) => {
+			shown.measured = false;
+		},
+		(shown) => {
+			shown.downloads.total = 7;
+		},
+		(shown) => {
+			shown.version_source = 'current';
+		},
+	];
+	for (const change of impossible) {
+		const { body } = event({ signed: false });
+		change(body.data.runs[0].judge_view);
+		body.data = sign(body.data);
+		const result = verdictOf(body);
+		assert.equal(result.checks.find((entry) => entry.rule === '1 signature').ok, true);
+		assert.ok(failed(result).includes('fields'), change.toString());
+		assert.equal(result.verdict, 'reject');
+	}
 });
 
 test('times must be strictly in order: equal start and end, a retry starting the moment the first ended, a run at the ticket time', () => {

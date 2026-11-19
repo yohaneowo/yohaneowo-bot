@@ -523,6 +523,8 @@ test('a run that fails before measuring still prints a judge view with a fixed c
 	const { code, json } = await runMain([URL_A, '--ref', 'current', '--min-free-mb', '500'], { repo, stagingRoot: newStagingRoot(), statfs: () => ({ bavail: 1, bsize: 1 }) });
 	assert.equal(code, EXIT.SETUP);
 	assert.deepEqual([json.judge_view.measured, json.judge_view.error_code, json.judge_view.log_lines], [false, 'LOW_DISK', []]);
+	assert.equal(json.judge_view.requested_ref, 'current', 'the ref it was asked for, so the checker can match the run to its slot');
+	assert.deepEqual(require('../scripts/repro-view').validateJudgeView(json.judge_view), []);
 });
 
 test('without the LinkHub settings the run still happens and says so', async () => {

@@ -437,8 +437,8 @@ function buildReport({ options, siteName, version, childOutcome, elapsedMs, note
 }
 
 // The report of a run that never measured anything (bad arguments, setup failure, watchdog), with its judge view.
-function scriptErrorReport(code, message) {
-	const report = { ok: false, measured: false, script_error: { code, message: String(message).slice(0, 400) } };
+function scriptErrorReport(code, message, ref = null) {
+	const report = { ok: false, measured: false, ref, script_error: { code, message: String(message).slice(0, 400) } };
 	report.judge_view = buildJudgeView(report, []);
 	return report;
 }
@@ -747,7 +747,7 @@ async function main(argv, deps = {}) {
 		watchdog = setTimeout(
 			onWatchdog ?? (() => {
 				emergencyCleanup();
-				print(scriptErrorReport('WATCHDOG', 'the run did not finish in time and was stopped'));
+				print(scriptErrorReport('WATCHDOG', 'the run did not finish in time and was stopped', options.ref));
 				process.exit(124);
 			}),
 			watchdogMs ?? (options.timeoutSeconds + WATCHDOG_EXTRA_SECONDS) * 1000,
@@ -799,7 +799,7 @@ async function main(argv, deps = {}) {
 	}
 	catch (error) {
 		const known = error instanceof ScriptError;
-		print(scriptErrorReport(known ? error.code : 'UNEXPECTED', error.message), options?.pretty);
+		print(scriptErrorReport(known ? error.code : 'UNEXPECTED', error.message, options?.ref ?? null), options?.pretty);
 		return known ? error.exitCode : EXIT.SETUP;
 	}
 	finally {
