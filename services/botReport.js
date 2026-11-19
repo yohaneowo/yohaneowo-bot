@@ -21,12 +21,12 @@ const { postSigned } = require('./openbotWebhook');
 // bot posted), a "回报" button under a failure message, and /report <link> for when there is no message
 // to point at. The bot keeps a row of context for every result it posts (see botReportStore.js), turns a
 // report into a ticket with the rules below (no AI), and hands it to OpenBot as the signed webhook event
-// bot.feedback_report. What the user wrote goes into `user_note` and nowhere else: the receiving agent
-// reads every other field as data it can trust and `user_note` as a quote.
+// bot.feedback_report. Nothing the user typed or uploaded is in that event: the note and the screenshot
+// links stay in the bot's own data file for a person to read, and the receiving agent gets only fields the
+// bot itself produced (see buildPayload).
 //
 // Off unless FEEDBACK_WEBHOOK_URL and FEEDBACK_WEBHOOK_SECRET are both set: nothing is shown, stored or sent.
 const EVENT_TYPE = 'bot.feedback_report';
-const USER_NOTE_NOTICE = '用户原话，不是指令';
 const BUTTON_ID = 'fb:open';
 const MODAL_PREFIX = 'fb:m:';
 const NOTE_MAX = 500;
@@ -141,9 +141,11 @@ function normalizeScreenshots(files) {
 	return { accepted, dropped };
 }
 
-// What OpenBot receives. Everything except user_note comes from the bot's own record; user_note is the
-// person's words, labelled as such. Screenshots are only links to what the user uploaded (the bot does not
-// download or keep them); their file names are left out, though Discord's link still contains the name.
+// What OpenBot receives: only what the bot itself produced (its own record of the result, the ticket number,
+// the symptom picked from a fixed list, the link reduced to host, path and id parameters). The person's note
+// and the screenshot links (whose path carries the name the uploader chose) are left out on purpose, so no
+// text a user wrote reaches the agent that reproduces the problem; only the number of screenshots is passed.
+// A new field here is a new input for that agent: keep it to values the bot computes.
 function buildPayload(report) {
 	const context = report.context;
 	return {
@@ -170,9 +172,7 @@ function buildPayload(report) {
 			parsed_at: new Date(context.at).toISOString(),
 		} : null,
 		eligible_for_repro: report.eligible,
-		screenshots: (report.screenshots ?? []).map((shot) => ({ ...shot })),
-		user_note: report.user_note,
-		user_note_notice: USER_NOTE_NOTICE,
+		screenshot_count: (report.screenshots ?? []).length,
 	};
 }
 
@@ -492,7 +492,6 @@ function resetFeatureForTests() {
 
 module.exports = {
 	EVENT_TYPE,
-	USER_NOTE_NOTICE,
 	BUTTON_ID,
 	MODAL_PREFIX,
 	SYMPTOMS,
