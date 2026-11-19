@@ -6,7 +6,7 @@
 
 ## 硬性限制
 
-- 只在 `develop` 分支开发。推送、部署、合 `main` 要老板当次明说同意（历史上某次授权不延伸到下一次）。
+- 只在 `develop` 分支开发。推送、部署、合 `main` 要老板当次明说同意（历史上某次授权不延伸到下一次）。合 `main` 的常设例外（老板 2026-11-19，见 `CLAUDE.md` 的「分支」一条）：「反馈→重现→修复」流程里的 bot 修复，若 ① 已重现成功并留有证据（字节数、秒数、版本）、② 维护员_Tess 独立复核通过，上线稳定版不必再问老板；上线前通知秘书或 King（通知不是批准），部署闸门照旧。不适用：新功能（含反馈收件功能本身）、还没重现的防护性修改（仍要老板逐次点头）、别的项目。验证的人自己仍不合 `main`。
 - 不碰 `prd`：不跑 `npm start`、`npm run deploy`、`npm run line`、`npm run docker:release`。
 - 不向真实 Discord／LINE 发测试讯息，不删真人讯息，不读写真人资料。验证用单元测试和不发送的 fixture（假 message、假 `postMedia`、假 probe、假 fetch）。
 - **不要另开第二个 bot。** `dev`（本机）与 `stg`（Coolify 上的测试 bot）是同一个 Discord 测试 bot 的 token（见 `CLAUDE.md`），本机 `npm run dev` / `dev:dc` 与 Coolify 同时跑会出现两个实例。要在真实 Discord 看效果，先问老板，或交给 Tess（push develop 后看 Coolify 上的测试 bot）。
