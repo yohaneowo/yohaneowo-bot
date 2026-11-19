@@ -141,37 +141,20 @@ function normalizeScreenshots(files) {
 	return { accepted, dropped };
 }
 
-// What OpenBot receives: only what the bot itself produced (its own record of the result, the ticket number,
-// the symptom picked from a fixed list, the link reduced to host, path and id parameters). The person's note
-// and the screenshot links (whose path carries the name the uploader chose) are left out on purpose, so no
-// text a user wrote reaches the agent that reproduces the problem; only the number of screenshots is passed.
-// A new field here is a new input for that agent: keep it to values the bot computes.
+// What OpenBot receives: exactly the seven fields the boss allowed for the agent that reproduces the problem
+// (decision of 2026-11-19): ticket number, site, the link reduced to host, path and id parameters, symptom
+// (from a fixed list), the bot version the result came from, the id of the bot's message, and how many
+// screenshots there are. Everything else (the person's note, the screenshot links, whose path carries the
+// name the uploader chose, and the bot's own measurements such as bytes and seconds) stays in the bot's data
+// file for a person to read. A new field here is a new input for that agent and needs a decision first.
 function buildPayload(report) {
-	const context = report.context;
 	return {
 		report_id: report.id,
-		created_at: new Date(report.created_at).toISOString(),
-		source: report.source,
-		symptom: report.symptom,
-		symptom_label: SYMPTOMS[report.symptom] ?? report.symptom,
 		site: report.site ?? null,
 		url: report.url ? canonicalUrl(report.url) : null,
-		url_key: report.url_key ?? null,
+		symptom: report.symptom,
 		bot_version: report.bot_version,
-		reporter_count: report.reporters.length,
-		submission_count: report.count,
-		context: context ? {
-			message_id: context.message_id,
-			outcome: context.outcome,
-			bytes: context.bytes,
-			duration_sec: context.duration_sec,
-			file_count: context.file_count,
-			layer: context.layer,
-			compressed: Boolean(context.compressed),
-			error_code: context.error_code ?? null,
-			parsed_at: new Date(context.at).toISOString(),
-		} : null,
-		eligible_for_repro: report.eligible,
+		message_id: report.context?.message_id ?? null,
 		screenshot_count: (report.screenshots ?? []).length,
 	};
 }

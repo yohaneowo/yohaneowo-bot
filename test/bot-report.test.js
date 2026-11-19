@@ -218,21 +218,18 @@ test('submitting the form from a bot message: ticket #1, an answer only the repo
 	assert.equal(sent[0].deliveryId, 'feedback-1');
 	assert.deepEqual(sent[0].config, { url: HOOK_URL, secret: SECRET });
 	const data = sent[0].data;
-	assert.deepEqual([data.report_id, data.source, data.symptom, data.site, data.bot_version], [1, 'btn', 'empty_file', 'YouTube', VERSION]);
-	assert.deepEqual([data.reporter_count, data.submission_count, data.eligible_for_repro], [1, 1, true]);
+	assert.deepEqual([data.report_id, data.symptom, data.site, data.bot_version, data.message_id], [1, 'empty_file', 'YouTube', VERSION, 'm1']);
+	const stored = feature.store.getReport(1);
+	assert.deepEqual([stored.source, stored.reporters, stored.count, stored.eligible], ['btn', ['u2'], 1, true], 'the rest stays in the data file');
 	assert.equal(feature.store.getReport(1).delivery.status, 'sent');
 	assert.equal(feature.store.getReport(1).user_note, '影片是空的', 'the note stays in the bot\'s own data file');
 });
 
 // The event carries only what the bot produced. Adding a field here is a decision (it is a new input for
 // the agent that reproduces the problem), so the list is checked exactly.
-const PAYLOAD_FIELDS = [
-	'bot_version', 'context', 'created_at', 'eligible_for_repro', 'report_id', 'reporter_count', 'screenshot_count',
-	'site', 'source', 'submission_count', 'symptom', 'symptom_label', 'url', 'url_key',
-];
-const CONTEXT_FIELDS = ['bytes', 'compressed', 'duration_sec', 'error_code', 'file_count', 'layer', 'message_id', 'outcome', 'parsed_at'];
+const PAYLOAD_FIELDS = ['bot_version', 'message_id', 'report_id', 'screenshot_count', 'site', 'symptom', 'url'];
 
-test('the event has exactly the structured fields: no user_note, no notice, no screenshot links or names', async () => {
+test('the event has exactly the seven allowed fields: no note, no screenshot links or names, no measurements', async () => {
 	const feature = makeFeature();
 	record(feature);
 	await report(feature, {
@@ -241,7 +238,7 @@ test('the event has exactly the structured fields: no user_note, no notice, no s
 	});
 	const data = sent[0].data;
 	assert.deepEqual(Object.keys(data).sort(), PAYLOAD_FIELDS);
-	assert.deepEqual(Object.keys(data.context).sort(), CONTEXT_FIELDS);
+	assert.equal(Object.values(data).every((value) => value === null || ['string', 'number'].includes(typeof value)), true, 'flat values only');
 	assert.equal(data.screenshot_count, 1);
 	const body = JSON.stringify(data);
 	for (const fragment of ['我点开只有黑画面', 'user_note', '用户原话', 'cdn.discordapp.com', 'my_screenshot']) {
@@ -250,13 +247,14 @@ test('the event has exactly the structured fields: no user_note, no notice, no s
 	const stored = feature.store.getReport(1);
 	assert.equal(stored.user_note, '我点开只有黑画面');
 	assert.match(stored.screenshots[0].url, /my_screenshot/, 'the screenshot link is kept for a person to look at');
+	assert.deepEqual([stored.context.bytes, stored.context.duration_sec, stored.context.layer], [9020128, 121.17, 'local'], 'and so are the bot\'s measurements');
 });
 
 test('the same form from the message command is source "ctx"', async () => {
 	const feature = makeFeature();
 	record(feature);
 	await report(feature, { customId: 'fb:m:ctx:m1', symptom: 'wrong_media' });
-	assert.equal(sent[0].data.source, 'ctx');
+	assert.equal(feature.store.getReport(1).source, 'ctx');
 	assert.equal(sent[0].data.symptom, 'wrong_media');
 });
 
@@ -314,7 +312,6 @@ test('instruction-like text in the note, the link and the screenshot names is no
 		const body = JSON.stringify(event.data).toLowerCase();
 		for (const fragment of fragments) assert.equal(body.includes(fragment.toLowerCase()), false, `"${fragment}" is not in ${event.deliveryId}`);
 		assert.equal(event.data.url, YOUTUBE, 'the link is reduced to host, path and the id parameters');
-		assert.equal('error_message' in (event.data.context ?? {}), false);
 		assert.equal(event.data.screenshot_count, 1);
 	}
 	assert.equal(feature.store.getReport(1).user_note, injection, 'the note is kept for a person, as written');
@@ -393,8 +390,9 @@ test('the same person twice is one reporter, two submissions', async () => {
 	record(feature);
 	await report(feature, { id: 'i-1' });
 	await report(feature, { id: 'i-2' });
-	const payload = buildPayload(feature.store.getReport(1));
-	assert.deepEqual([payload.reporter_count, payload.submission_count], [1, 2]);
+	const stored = feature.store.getReport(1);
+	assert.deepEqual([stored.reporters.length, stored.count], [1, 2]);
+	assert.deepEqual(Object.keys(buildPayload(stored)).sort(), PAYLOAD_FIELDS);
 });
 
 test('a different symptom, a different link, a later window or a newer bot version is a new ticket', async () => {
@@ -561,7 +559,8 @@ test('/report with a link this person asked the bot to parse recently: queued fo
 	const interaction = await report(feature, { customId: opened.modals[0].custom_id, userId: 'u1' });
 	assert.match(text(interaction), /已收到，编号 #1/);
 	assert.equal(sent.length, 1);
-	assert.deepEqual([sent[0].data.source, sent[0].data.eligible_for_repro, sent[0].data.context.message_id], ['cmd', true, 'm1']);
+	assert.equal(sent[0].data.message_id, 'm1');
+	assert.deepEqual([feature.store.getReport(1).source, feature.store.getReport(1).eligible], ['cmd', true]);
 });
 
 test('/report with a link that is not in this person\'s recent records, or that someone else parsed: kept, not sent', async () => {
@@ -746,10 +745,11 @@ test('2026-11-15 YouTube Shorts: the bot posted an empty file as a success; the 
 	await report(feature, { customId: 'fb:m:ctx:m-1115', userId: 'boss', symptom: 'empty_file', note: '发出来的影片是 0 字节' });
 	const data = sent[0].data;
 	assert.deepEqual(
-		[data.site, data.symptom, data.url, data.bot_version, data.context.outcome, data.context.bytes, data.context.duration_sec, data.context.layer],
-		['YouTube', 'empty_file', YOUTUBE, '525c6b3a2201', 'success', 0, null, 'linkhub'],
+		[data.site, data.symptom, data.url, data.bot_version, data.message_id],
+		['YouTube', 'empty_file', YOUTUBE, '525c6b3a2201', 'm-1115'],
 	);
-	assert.equal(data.eligible_for_repro, true);
+	const context = feature.store.getReport(1).context;
+	assert.deepEqual([context.outcome, context.bytes, context.duration_sec, context.layer], ['success', 0, null, 'linkhub'], 'the measurements are in the ticket the bot keeps');
 });
 
 test('2026-11-17 Facebook reel: the bot posted another reel\'s video; the report carries its length and the version of that day', async () => {
@@ -775,7 +775,9 @@ test('2026-11-17 Facebook reel: the bot posted another reel\'s video; the report
 	await report(feature, { customId: 'fb:m:ctx:m-1117', userId: 'boss', symptom: 'wrong_media' });
 	const data = sent[0].data;
 	assert.deepEqual(
-		[data.site, data.symptom, data.url, data.bot_version, data.context.duration_sec, data.context.bytes, data.context.layer],
-		['Facebook', 'wrong_media', 'https://www.facebook.com/reel/858979257261500', '7ec20716edda', 15.027, null, 'linkhub'],
+		[data.site, data.symptom, data.url, data.bot_version, data.message_id],
+		['Facebook', 'wrong_media', 'https://www.facebook.com/reel/858979257261500', '7ec20716edda', 'm-1117'],
 	);
+	const context = feature.store.getReport(1).context;
+	assert.deepEqual([context.duration_sec, context.bytes, context.layer], [15.027, null, 'linkhub'], 'the measurements are in the ticket the bot keeps');
 });
