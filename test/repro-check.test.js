@@ -178,7 +178,7 @@ test('a verify result: two runs of the fix version, a 40-character verify_ref', 
 test('rule 4: a run that ran another version than it asked for is rejected', () => {
 	const runs = initialRuns();
 	const wrong = [run(1, INCIDENT, CURRENT_SHA, 1), ...runs.slice(1)];
-	assert.deepEqual(failed(verdictOf(event({ runs: wrong }).body)), ['4 versions']);
+	assert.deepEqual(failed(verdictOf(event({ runs: wrong }).body)), ['fields', '4 versions'], 'the view itself already says it is not the version asked for');
 	assert.deepEqual(failed(verdictOf(event({ current_sha: FIX_SHA }).body)), ['4 versions']);
 	assert.ok(failed(verdictOf(event({ current_sha: undefined }).body)).includes('4 versions'));
 });
@@ -361,6 +361,10 @@ test('a signed result whose view combines fields the script never combines is re
 		},
 		(shown) => {
 			shown.version_source = 'current';
+		},
+		(shown) => {
+			shown.files[0].duration_sec = 5;
+			shown.duration_sec = 99;
 		},
 	];
 	for (const change of impossible) {

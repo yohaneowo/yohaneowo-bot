@@ -317,6 +317,59 @@ test('validateJudgeView: values that are each valid but never appear together ar
 	}
 });
 
+test('validateJudgeView: the run\'s length is the length of the first file that has one; a cut file list stays valid', () => {
+	const good = buildJudgeView(report(), REAL_LINES);
+	const longer = structuredClone(good);
+	longer.duration_sec = 99;
+	assert.ok(validateJudgeView(longer).some((problem) => /length of the first file/.test(problem)));
+
+	const twoFiles = buildJudgeView(report({ result: { ...report().result, files: [{ bytes: 10, duration_sec: null }, { bytes: 20, duration_sec: 5 }], bytes_total: 30, duration_sec: 5 } }), []);
+	assert.deepEqual(validateJudgeView(twoFiles), [], 'the first file without a length is skipped, as the runner does');
+	const noLength = buildJudgeView(report({ result: { ...report().result, files: [{ bytes: 10, duration_sec: null }], bytes_total: 10, duration_sec: null } }), []);
+	assert.deepEqual(validateJudgeView(noLength), []);
+	noLength.duration_sec = 7;
+	assert.ok(validateJudgeView(noLength).some((problem) => /no file has a length/.test(problem)));
+
+	// Twelve files: the view shows ten; the length and the bytes may come from files that are not shown.
+	const files = [...Array.from({ length: 10 }, () => ({ bytes: 1, duration_sec: null })), { bytes: 100, duration_sec: 5 }, { bytes: 100, duration_sec: 6 }];
+	const cut = buildJudgeView(report({ result: { ...report().result, files, bytes_total: 210, duration_sec: 5 } }), []);
+	assert.equal(cut.files.length, 10);
+	assert.deepEqual(validateJudgeView(cut), [], 'a view of a long file list made by the script passes');
+	cut.bytes_total = 9;
+	assert.ok(validateJudgeView(cut).some((problem) => /sum of the files/.test(problem)), 'still at least the bytes it shows');
+});
+
+test('validateJudgeView: share-link ids, reported layers, requested versions and empty results must agree with the rest', () => {
+	const good = buildJudgeView(report(), REAL_LINES);
+	const cases = [
+		[(view) => {
+			view.content_id_source = 'redirect';
+		}, /other than Facebook/],
+		[(view) => {
+			view.layer = null;
+		}, /reported layer that is missing/],
+		[(view) => {
+			view.requested_ref = '525c6b3a2201';
+			view.version_source = 'github';
+		}, /not the one asked for/],
+		[(view) => {
+			view.files = [];
+			view.duration_sec = null;
+		}, /totals without files/],
+	];
+	for (const [change, expected] of cases) {
+		const view = structuredClone(good);
+		change(view);
+		assert.ok(validateJudgeView(view).some((problem) => expected.test(problem)), change.toString());
+	}
+	const facebook = buildJudgeView(report({ site: 'Facebook', content_id: '858979257261500', content_id_source: 'redirect', result: { ...report().result, media_id: '858979257261500' } }), []);
+	assert.deepEqual(validateJudgeView(facebook), []);
+	const asked = buildJudgeView(report({ ref: '2ef23ef', version_source: 'github' }), []);
+	assert.deepEqual(validateJudgeView(asked), []);
+	const empty = buildJudgeView(report({ result: { ...report().result, files: [], bytes_total: 0, duration_sec: null, media_id: null } }), []);
+	assert.deepEqual(validateJudgeView(empty), [], 'a text-only result with no files is still a valid view');
+});
+
 test('only the last 30 lines are shown; the rest is counted as left out', () => {
 	const lines = Array.from({ length: 40 }, (unused, index) => `[YouTube#0001 +${index}.0s] running yt-dlp`);
 	const { lines: shown, dropped } = judgeLogLines([...lines, 'noise']);

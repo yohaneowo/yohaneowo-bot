@@ -8,6 +8,7 @@
 // host forwards only that field.
 const SCHEMA = 'judge_view/1';
 const MAX_LOG_LINES = 30;
+const MAX_FILES = 10;
 const SITE_NAMES = new Set(['TikTok', 'Facebook', 'Instagram', '小红书', 'YouTube', 'B站', 'Threads', 'X']);
 const LAYER_NAMES = new Set(['linkhub', 'local', 'local-first', 'local-alt']);
 const VERSION_SOURCES = new Set(['git', 'github', 'current']);
@@ -154,7 +155,7 @@ function judgeLogLines(lines) {
 
 function judgeFiles(files) {
 	if (!Array.isArray(files)) return [];
-	return files.slice(0, 10).map((file) => ({
+	return files.slice(0, MAX_FILES).map((file) => ({
 		bytes: count(file?.bytes),
 		duration_sec: amount(file?.duration_sec),
 		width: count(file?.width),
@@ -249,7 +250,7 @@ function validateJudgeView(view) {
 	expect(isIn(VERSION_SOURCES, view.version_source), 'version_source');
 	expect(isCount(view.bytes_total), 'bytes_total');
 	expect(isAmount(view.duration_sec), 'duration_sec');
-	expect(Array.isArray(view.files) && view.files.length <= 10 && view.files.every((file) => (
+	expect(Array.isArray(view.files) && view.files.length <= MAX_FILES && view.files.every((file) => (
 		sameKeys(file, FILE_KEYS) && isCount(file.bytes) && isAmount(file.duration_sec) && isCount(file.width) && isCount(file.height) &&
 		(file.codec === null || file.codec === OTHER || CODECS.has(file.codec))
 	)), 'files');
@@ -306,12 +307,32 @@ function crossFieldProblems(view) {
 		expect(['linkhub', 'ytdlp', 'direct', 'total', 'linkhub_parses'].every((key) => downloads[key] === null) && !downloads.via_linkhub, 'an unmeasured run with download counts');
 	}
 	if (view.content_id !== null) expect(view.content_id_source === 'link' || view.content_id_source === 'redirect', 'a content_id that was not resolved');
+	// Share links are followed for Facebook only.
+	if (view.content_id_source === 'redirect') expect(view.site === 'Facebook', 'a redirected id for a site other than Facebook');
+	// A layer the version reported itself is a layer.
+	if (view.layer_source === 'reported') expect(view.layer !== null, 'a reported layer that is missing');
+	// The version that ran starts with the commit that was asked for.
+	if (view.version_sha !== null && view.requested_ref !== null && view.requested_ref !== 'current') {
+		expect(view.version_sha.startsWith(view.requested_ref), 'a version that is not the one asked for');
+	}
+	// A result without files weighs nothing and has no length.
+	if (view.ok && view.files.length === 0) expect(view.bytes_total === 0 && view.duration_sec === null, 'totals without files');
 	if (downloads.linkhub !== null && downloads.ytdlp !== null && downloads.direct !== null && downloads.total !== null) {
 		expect(downloads.total === downloads.linkhub + downloads.ytdlp + downloads.direct, 'download counts that do not add up');
 		expect(downloads.via_linkhub === downloads.linkhub > 0, 'via_linkhub disagrees with the LinkHub count');
 	}
-	if (view.files.length > 0 && view.files.length < 10 && view.bytes_total !== null && view.files.every((file) => file.bytes !== null)) {
-		expect(view.bytes_total === view.files.reduce((sum, file) => sum + file.bytes, 0), 'bytes_total is not the sum of the files');
+	// The view shows at most MAX_FILES files; a longer list is cut, so with a full list the totals may include
+	// files that are not shown.
+	const listCut = view.files.length >= MAX_FILES;
+	if (view.files.length > 0 && view.bytes_total !== null && view.files.every((file) => file.bytes !== null)) {
+		const shownBytes = view.files.reduce((sum, file) => sum + file.bytes, 0);
+		expect(listCut ? view.bytes_total >= shownBytes : view.bytes_total === shownBytes, 'bytes_total is not the sum of the files');
+	}
+	// The run's length is the length of the first file that has one (scripts/repro-runner.js).
+	if (view.files.length > 0) {
+		const firstLength = view.files.find((file) => file.duration_sec !== null)?.duration_sec ?? null;
+		if (firstLength !== null) expect(view.duration_sec === firstLength, 'duration_sec is not the length of the first file that has one');
+		else if (!listCut) expect(view.duration_sec === null, 'a duration_sec although no file has a length');
 	}
 	return problems;
 }
