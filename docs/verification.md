@@ -56,6 +56,7 @@
 | `services/sites/linkhub.js`                              | `test/linkhub-gif.test.js` 通过：GIF 优先、失败回退 mp4；LinkHub 空档改走本机解析重试一次                                 |
 | slash 指令（`/x`、「解析链接」）                         | 改了指令定义要提醒跑 `npm run deploy:dev`（只注册到测试 bot）；真实入口截图由 Tess／老板在测试 bot 上验，开发者不自己登入 |
 | `services/sites/chain.js`、`deadline.js`、`video.js`（yt-dlp 参数）、`linkhub.js` 下载 | 空影片自动重试契约（下）：`test/fallback-chain.test.js`、`media-post.test.js`、`ytdlp-args.test.js`、`linkhub-multi-item.test.js`、`line-busy.test.js` 通过，**加上 dev 容器里跑 `test/ytdlp-stub.test.js` 的输出**（假 yt-dlp 的独立子进程测试） |
+| `scripts/repro.js`、`scripts/repro-runner.js` | `test/repro.test.js` 通过，并在 dev 容器里用真实链接对 `--ref current` 与至少一个旧 SHA 各跑一次，贴出 JSON（密钥值不得出现在输出里）；这支脚本不能改成会上传、会读 `index.js` 或会带出环境变量 |
 
 ### 空影片契约（`test/empty-file.test.js` 已覆盖）
 
@@ -78,6 +79,43 @@
 ### 在 dev 容器里跑整套测试（含假 yt-dlp 集成测试）
 
 不改容器里的 `/app`：把 `services`、`test`、`package.json` 打包送进容器的临时目录，`ln -s /app/node_modules`，在那里跑 `node --test test/*.test.js`（注意要用 glob，别用 `node --test test/`，会把 `test/helpers/` 当测试），跑完删掉临时目录。真实站点的解析检查（`downloadMedia`）也在容器里做，不发 Discord。
+
+### 重现脚本 `scripts/repro.js`（只下载、只量测，不上传、不碰 Discord）
+
+用途：同一条链接在「出事版本」和「develop」各跑几次，比较字节数、秒数、哪一层交的档，判断问题能不能重现（重现师_Reese 用的就是它）。
+
+```
+node scripts/repro.js <链接> --ref <SHA|current> [--max-bytes N] [--timeout 秒] [--min-free-mb N] [--source auto|git|github] [--pretty] [--keep]
+```
+
+- `--ref <SHA>`：bot repo 的某个提交（7～40 位十六进制，不收分支名）。脚本自己在暂存目录取出该版本：有 `.git` 就用 `git archive`，没有（dev 容器就是）就从 GitHub 的源码包下载（仓库是公开的，不用密钥）。依赖用的是现在这份的 `node_modules`（连结过去，不另装）；旧版本的 `package.json` 依赖和现在不同时，报告的 `notes` 会写明。
+- `--ref current`：不取版本，直接跑脚本所在的这份。在 dev 容器里，这就是现在部署的 develop。
+- 用完删暂存目录；被 `timeout`、Ctrl-C 或脚本自己的看门狗打断时，也会杀掉整棵子进程树再删（连 `kill -9` 留下的旧暂存目录，下次启动也会清掉 1 小时以前的）。`--timeout`（默认 300 秒）是整次的时限，取版本也算在内。
+- 磁盘余量低于 `--min-free-mb`（默认 500）就不跑，退出码 3。
+
+输出是一个 JSON（stdout），主要栏位：
+
+| 栏位 | 意思 |
+|---|---|
+| `ok` | 有交出可用的档案（`result` 有值）；`false` 时看 `error`（空档、超时、解析失败……），这仍是一次有效的量测 |
+| `version_sha`、`version_source` | 实际跑的版本（完整 SHA；`git`／`github`／`current`）。从 GitHub 读不到完整 SHA 时是你给的那个，`notes` 会说明 |
+| `result.bytes_total`、`result.duration_sec`、`result.files[]` | 字节数、秒数（ffprobe 读的）、每个档案的名称／字节／长度／编码 |
+| `result.layer`、`result.layer_source` | 哪一层交的档：新版本由 bot 自己回报（`reported`），旧版本从日志推断（`inferred`，只能分出 `linkhub`／`local`） |
+| `content_id` | 链接里看得到的影片或贴文 ID；短链和分享码（b23.tv、fb.watch、`/share/`……）不展开，是 `null` |
+| `downloads` | 这一次实际下载了几次：`linkhub`、`ytdlp`、`direct`、`total`，`via_linkhub` 标出有没有走 LinkHub；`linkhub_parses` 是 LinkHub 解析次数（不是下载）。重现师每张单最多 4 次下载，这里的 `total` 就是这一次的花费 |
+| `elapsed_ms`、`error`、`notes`、`log_tail` | 耗时、失败原因、提醒、最后 30 行 bot 日志（已脱敏） |
+
+退出码：0＝量测完成（链接本身可能失败，看 `ok`）；3＝没能开始（磁盘不足、找不到版本、缺 `node_modules`……）；64＝参数不对或不支持的链接；124＝看门狗；130／143＝被中断。除 0 以外，stdout 仍是 JSON，错误在 `script_error`。
+
+在 dev 容器里跑（脚本部署到 dev 之后）：
+
+```
+docker exec -u node -w /app <dev 的 portfolio-bot 容器> node scripts/repro.js <链接> --ref <SHA>
+```
+
+- **不要用 `doppler run`**：脚本自己从 bot 主进程（`node index.js`，工作目录就是这个 repo）按名字只拷 `LINKHUB_API_URL`、`LINKHUB_API_KEY` 两个变量；`DOPPLER_TOKEN`、`TOKEN`（bot token）、admin、webhook 等一律不拷，也不会传给被量测的版本。在 Coolify 容器里这两个变量只在 bot 进程里，PID 1（docker-init）没有它们，只有 `DOPPLER_TOKEN`；脚本也会先看 PID 1，但只认这两个名字。
+- 输出里任何环境变量的值都会被替换成 `[redacted]`；脚本不印环境、不加载 `index.js` 或 `discord.js`，不可能登入 Discord。被量测的版本在子进程里跑，只拿到 `PATH`、yt-dlp／ffmpeg／ffprobe 的路径、`XHS_API_URL` 和上面两个变量，临时目录指向暂存目录。
+- 限制：只比对「交档的是哪一层」，不能指定只走某一层；`content_id` 只来自链接本身，所以 Facebook 分享连结「跳转后的 reel ID」目前量不到；旧版本的 `layer` 是推断的。
 
 ### 删原讯息契约（`index.js`）
 

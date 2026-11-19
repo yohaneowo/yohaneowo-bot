@@ -29,6 +29,7 @@
 | 站长工具 `/owner` | 只有 bot 的拥有者能用：`/owner bonus`（加减奖励次数）、`/owner check` | `commands/utility/owner.js` | `V1` → `owner global`。真实调用：未验证 | 指令是全局注册，靠代码里的拥有者检查挡人，改这段要小心（`commands/utility/owner.js` 注释）。其他坑：待查证 |
 | DotaHub 死亡地图私讯 | 没有指令；玩家打完天梯后收到 bot 私讯（死亡顺序与地图） | `services/dota/notify.js`；`index.js`（`startDotaNotifications`） | `V4` → `dota/notify 2`。真实私讯：未验证（要 admin 队列与网站画图接口） | 每分钟轮询 admin；私讯送不到也要回报 `/sent`，否则卡住队列（`CLAUDE.md` 开头）。`index.js` 开头把连接时限调到 2000 ms，默认 250 ms 从家里网络会连不上，别删（`index.js` 第 1～3 行） |
 | 上报 admin 后台 | 没有使用者入口；群组、活动、解析与运行日志、资产快照、依赖清单定时送 admin | `services/adminApi.js`、`services/aiUsage.js`、`services/dependencies.js`、`services/mediaLog.js` | `V5` 第一行 → `false`（没设变量就不上报）；`V4` → `adminApi 15`。真实写入：未验证 | 一律 best-effort；栏位长度要对齐 admin 的 `max_length`，否则整批被拒；不要让两个 bot 报到同一个 admin（`CLAUDE.md`「与 admin 对接」） |
+| 重现脚本（给重现师用） | 没有使用者入口；员工在 dev 容器里执行 `node scripts/repro.js <链接> --ref <SHA>`，只下载、只量测、不上传 | `scripts/repro.js`、`scripts/repro-runner.js` | `test/repro.test.js`；真实执行见 `docs/verification.md`「重现脚本」。未验证：重现师通过受限通道执行（通道尚未建立） | 不要 `doppler run`：LinkHub 两个变量要从 bot 进程按名字读（PID 1 没有）；GitHub 压缩包顶层目录用的是你给的短 SHA，完整 SHA 在包头；旧版本的 `layer` 是从日志推断的 |
 | 指令注册与部署 | `npm run deploy:dev`／`deploy` 注册 slash 指令；push `develop`／`main` 由 Coolify 自动部署 | `deploy-commands.js`、`commands/utility/`（含示例 `ping.js`、`user.js`）、`compose.coolify.yaml`、`Dockerfile` | `V1` → 9 行（全局 6、服务器 3）；`V6` → `syntax-ok`。真实注册与部署：未验证 | `dev` 与 `stg` 是同一个测试 bot 的 token，本机不要另开第二个 bot（`CLAUDE.md`「工作约定」）。看部署版本要读部署队列或容器的 `SOURCE_COMMIT`（`2026-11-03-1851-yohaneowo-bot-Coolify部署读回方法.md`） |
 
 ## 验证命令
