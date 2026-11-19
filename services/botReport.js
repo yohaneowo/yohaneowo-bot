@@ -99,15 +99,22 @@ function botVersion(env = process.env) {
 }
 
 // The link as the receiver sees it: scheme, host and path plus the few query parameters that say which video
-// it is. A link the user pasted can carry any text in its query string or after the id; none of that is passed on.
-const IDENTITY_PARAMS = ['v', 'p', 'id', 'story_fbid'];
+// it is. A link the user pasted can carry any text in its query string; a parameter is kept only when its
+// value has the shape of that id (a YouTube id or a numeric Facebook id for v, a page number for p, digits for
+// id, digits or Facebook's pfbid form for story_fbid), so no other text is passed on through it.
+const IDENTITY_PARAMS = {
+	v: /^(?:[\w-]{11}|\d{1,25})$/,
+	p: /^\d{1,4}$/,
+	id: /^\d{1,25}$/,
+	story_fbid: /^(?:\d{1,25}|pfbid[0-9A-Za-z]{10,80})$/,
+};
 
 function canonicalUrl(url) {
 	try {
 		const parsed = new URL(url);
-		const kept = IDENTITY_PARAMS
-			.filter((name) => parsed.searchParams.has(name))
-			.map((name) => `${name}=${encodeURIComponent(parsed.searchParams.get(name))}`)
+		const kept = Object.entries(IDENTITY_PARAMS)
+			.filter(([name, shape]) => shape.test(parsed.searchParams.get(name) ?? ''))
+			.map(([name]) => `${name}=${parsed.searchParams.get(name)}`)
 			.join('&');
 		return `${parsed.origin}${parsed.pathname.replace(/\/+$/, '')}${kept ? `?${kept}` : ''}`.slice(0, 200);
 	}

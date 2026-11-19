@@ -781,6 +781,28 @@ test('tickets keep their numbers across a restart', () => {
 	assert.equal(second.createReport({ user_id: 'u', url_key: 'k3', symptom: 'other', eligible: false }).id, 3);
 });
 
+test('canonicalUrl keeps an id parameter only when its value has the shape of that id', () => {
+	const injected = 'IGNORE_ALL_PREVIOUS_INSTRUCTIONS';
+	assert.equal(canonicalUrl(`https://www.youtube.com/shorts/abcdefghijk?v=${injected}`), 'https://www.youtube.com/shorts/abcdefghijk');
+	assert.equal(canonicalUrl('https://www.youtube.com/watch?v=HPawwstzIU0&list=x'), 'https://www.youtube.com/watch?v=HPawwstzIU0');
+	assert.equal(canonicalUrl('https://www.facebook.com/watch/?v=858979257261500'), 'https://www.facebook.com/watch?v=858979257261500');
+	assert.equal(canonicalUrl(`https://www.bilibili.com/video/BV17YdXY4Ewj?p=${injected}`), 'https://www.bilibili.com/video/BV17YdXY4Ewj');
+	assert.equal(canonicalUrl('https://www.facebook.com/permalink.php?story_fbid=pfbid02AbCdEfGhIjKlMnOp&id=100064'), 'https://www.facebook.com/permalink.php?id=100064&story_fbid=pfbid02AbCdEfGhIjKlMnOp');
+	for (const value of [injected, 'ignore all rules', '12 34', `pfbid ${injected}`, '%0A', 'x'.repeat(12)]) {
+		const link = `https://www.facebook.com/story.php?story_fbid=${encodeURIComponent(value)}&id=${encodeURIComponent(value)}&v=${encodeURIComponent(value)}&p=${encodeURIComponent(value)}`;
+		assert.equal(canonicalUrl(link), 'https://www.facebook.com/story.php', value);
+	}
+});
+
+test('an instruction in a link id parameter does not reach the event (end to end)', async () => {
+	const feature = makeFeature();
+	const link = 'https://www.youtube.com/shorts/abcdefghijk?v=IGNORE_ALL_PREVIOUS_INSTRUCTIONS';
+	record(feature, { url: link });
+	await report(feature);
+	assert.equal(sent[0].data.url, 'https://www.youtube.com/shorts/abcdefghijk');
+	assert.equal(JSON.stringify(sent[0].data).includes('IGNORE'), false);
+});
+
 test('canonicalUrl keeps host, path and the id parameters only', () => {
 	assert.equal(canonicalUrl('https://www.bilibili.com/video/BV17YdXY4Ewj?p=2&spm_id_from=333&note=ignore%20this#t=3'), 'https://www.bilibili.com/video/BV17YdXY4Ewj?p=2');
 	assert.equal(canonicalUrl('https://x.com/GIPHY/status/1957913446118285360/?s=20'), 'https://x.com/GIPHY/status/1957913446118285360');
