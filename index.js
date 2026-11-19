@@ -13,6 +13,7 @@ const { setupVoiceHubs } = require('./services/voiceHubs');
 const { setupVoiceLog } = require('./services/voiceLog');
 const { moviesEnabled, runDaily: runDailyMovies, handleFeedbackButton } = require('./services/movies/recommender');
 const { handlePickInteraction } = require('./services/movies/picks');
+const { getFeature: getReportFeature, BUTTON_ID: REPORT_BUTTON_ID, MODAL_PREFIX: REPORT_MODAL_PREFIX } = require('./services/botReport');
 const { handleAnimePickInteraction } = require('./services/anime/picks');
 const { startDotaNotifications } = require('./services/dota/notify');
 const {
@@ -132,6 +133,14 @@ client.once(Events.ClientReady, async (readyClient) => {
 		});
 		console.log('Daily movie recommendations are enabled.');
 	}
+
+	if (getReportFeature().config.enabled) {
+		console.log('Bot problem reports are enabled.');
+		getReportFeature()
+			.redeliverPending()
+			.then((sent) => sent && console.log(`Sent ${sent} bot problem report(s) that had not been delivered.`))
+			.catch((error) => console.warn('[report] Re-sending pending reports failed:', error.message));
+	}
 });
 
 if (adminApiEnabled) {
@@ -225,6 +234,14 @@ client.on(Events.InteractionCreate, async (interaction) => {
 			.get(interaction.commandName)
 			?.autocomplete?.(interaction)
 			.catch((error) => console.warn(`Autocomplete for /${interaction.commandName} failed:`, error.message));
+		return;
+	}
+	if (interaction.isButton() && interaction.customId === REPORT_BUTTON_ID) {
+		await getReportFeature().handleButton(interaction).catch((error) => console.warn('[report] Report button failed:', error.message));
+		return;
+	}
+	if (interaction.isModalSubmit() && interaction.customId.startsWith(REPORT_MODAL_PREFIX)) {
+		await getReportFeature().handleModalSubmit(interaction).catch((error) => console.warn('[report] Report form failed:', error.message));
 		return;
 	}
 	if (interaction.isButton() && interaction.customId.startsWith('magnet:')) {

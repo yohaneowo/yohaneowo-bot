@@ -1,6 +1,7 @@
 const { downloadMedia, findSupportedSite } = require('./media');
 const { reportParse, withLogSite } = require('./adminApi');
 const { setBusyProbe } = require('./sites/chain');
+const { getFeature } = require('./botReport');
 
 const MAX_CONCURRENT_DOWNLOADS = 2;
 const DEFAULT_UPLOAD_LIMIT_MB = 10;
@@ -107,13 +108,14 @@ async function postMediaInSiteScope({ url, maxBytes, sharerId, update, logContex
 		media = await downloadMedia(url, maxBytes, (stage) => setStatus(STAGE_TEXT[stage]));
 		await setStatus('⬆️ 上传中…');
 		media.log.info('uploading to Discord');
-		await update({
+		const sent = await update({
 			content: formatCaption(media, url, sharerId),
 			files: media.files.map((file) => ({ attachment: file.path, name: file.name })),
 			allowedMentions: { parse: [] },
 		});
 		media.log.info('posted to Discord');
 		logResult('success', { file_count: media.files.length, compressed: Boolean(media.compressed) });
+		getFeature().recordResult({ message: sent, logContext, url, site: findSupportedSite(url)?.name, outcome: 'success', media });
 		return true;
 	}
 	catch (error) {
@@ -124,7 +126,11 @@ async function postMediaInSiteScope({ url, maxBytes, sharerId, update, logContex
 			error_message: error.code === 'EMPTY_FILE' ? `empty_file: ${error.detail ?? error.message}` : error.message,
 		});
 		await pendingEdit;
-		await setStatus(error.userMessage ? `⚠️ ${error.userMessage}` : '❌ 解析失败了 😢');
+		const failureText = error.userMessage ? `⚠️ ${error.userMessage}` : '❌ 解析失败了 😢';
+		const feature = getFeature();
+		const components = feature.failureComponents();
+		const failed = await setStatus(components.length ? { content: failureText, components } : failureText);
+		feature.recordResult({ message: failed, logContext, url, site: findSupportedSite(url)?.name, outcome: 'failed', error });
 		return false;
 	}
 	finally {

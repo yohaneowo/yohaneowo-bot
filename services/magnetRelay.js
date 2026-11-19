@@ -5,6 +5,7 @@ const crypto = require('node:crypto');
 // through a signed webhook; an OpenBot agent adds it to PikPak (the bot never holds PikPak
 // credentials). Best-effort: a failure is reported to the user and never affects anything else.
 const { fetchTorrentMeta, formatBytes } = require('./magnetMeta');
+const { signRequest, postSigned } = require('./openbotWebhook');
 
 const EVENT_TYPE = 'bot.magnet_request';
 const DEDUPE_WINDOW_MS = 30 * 60 * 1000;
@@ -113,44 +114,15 @@ function createDeduper(windowMs = DEDUPE_WINDOW_MS, now = Date.now) {
 	};
 }
 
-// Same signing scheme as the other OpenBot webhooks: HMAC-SHA256 (hex) over "<timestamp>.<delivery id>.<body>".
-function signRequest(secret, timestamp, deliveryId, body) {
-	return crypto.createHmac('sha256', secret).update(`${timestamp}.${deliveryId}.${body}`).digest('hex');
-}
-
-const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
-
-async function sendWebhook(config, data, { fetchImpl = fetch, now = Date.now, wait = sleep } = {}) {
-	const body = JSON.stringify({ type: EVENT_TYPE, data });
+async function sendWebhook(config, data, options = {}) {
 	// Unique per hand-off (OpenBot drops repeated delivery ids); retries inside one hand-off share it.
 	const deliveryId = `magnet-${data.infohash}-${data.message_id}-${crypto.randomBytes(4).toString('hex')}`;
-	let lastError;
-	for (let attempt = 1; attempt <= SEND_ATTEMPTS; attempt++) {
-		const timestamp = String(Math.floor(now() / 1000));
-		try {
-			const response = await fetchImpl(config.url, {
-				method: 'POST',
-				headers: {
-					'content-type': 'application/json',
-					'x-openbot-timestamp': timestamp,
-					'x-openbot-delivery-id': deliveryId,
-					'x-openbot-signature': `sha256=${signRequest(config.secret, timestamp, deliveryId, body)}`,
-				},
-				body,
-				signal: AbortSignal.timeout(SEND_TIMEOUT_MS),
-			});
-			if (response.ok) return;
-			// A rejected request will not succeed on retry (bad signature, unknown routine, ...).
-			if (response.status < 500) throw Object.assign(new Error(`webhook answered ${response.status}`), { final: true });
-			lastError = new Error(`webhook answered ${response.status}`);
-		}
-		catch (error) {
-			if (error.final) throw error;
-			lastError = error;
-		}
-		if (attempt < SEND_ATTEMPTS) await wait(RETRY_DELAY_MS);
-	}
-	throw lastError;
+	return postSigned(config, { type: EVENT_TYPE, data, deliveryId }, {
+		timeoutMs: SEND_TIMEOUT_MS,
+		attempts: SEND_ATTEMPTS,
+		retryDelayMs: RETRY_DELAY_MS,
+		...options,
+	});
 }
 
 // Requests waiting for a button press. Memory only: a bot restart or the TTL expires them.

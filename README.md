@@ -38,6 +38,7 @@
   有人进入入口，bot 会在同一个分类开一个「<名字> 的频道」（不限人数，权限跟随分类）并把人移过去；这个频道没人后 10 秒自动删除。
   不需要入口时直接删除那个频道即可。入口和临时频道记在 `data/voice-hubs.json`，bot 重启后会继续管理，离线期间空掉的频道也会在启动后删除。
 
+- **回报 bot 问题**（设了 `FEEDBACK_WEBHOOK_URL` 和 `FEEDBACK_WEBHOOK_SECRET` 才开启）：bot 发出的结果有问题时（空影片、发错片、解析失败、没回应），任何人都可以右键那条讯息 →「应用 → 回报 bot 问题」，或按失败讯息下的「回报」按钮，或用 `/report <链接>`，选症状、写几句话、选填截图。bot 回一个只有你看得到的编号，并把报告整理成固定格式，经签章 webhook 交给 OpenBot。这一期只负责收件。
 - **电影推荐**：先到 [yohaneowo.com/connect/discord](https://yohaneowo.com/connect/discord) 用 Discord 登录（已经用 Google 登录着的会直接把 Discord 关联上去），再授权 Trakt 帐号、选观影地区建立观影档案；然后在 Discord 用 `/movie subscribe` 开启每日推荐。另外 `/movie recommend` 随时可以随机推荐一部你没看过的电影（可选类型、年代、最长片长），每天 3 部（含「换一部」）；按「想看」会加进你的 Trakt 想看列表，按「看过了」会检查你有没有评分，没有就请你当场打分并写进 Trakt。每天早上 10 点（台湾时间）：
   1. 之前以「即将上映」推荐过、现在上映了的电影，加进今天的提醒；
   2. 该地区正在上映、还没判断过的电影，用规则（类型兴趣、评分偏好、喜欢的导演与演员、口碑、热门度）排出最合适的几部；
@@ -179,6 +180,8 @@ TMDB、Trakt、Anthropic、Voyage 的 key 都不在这里：电影功能的 TMDB
 | `GUILD_ID` | ✅ | slash 命令要注册到的服务器 |
 | `MEDIA_AUTO_DOWNLOAD` | | 设为 `true` 时开启消息中链接的自动解析，需要 Message Content Intent |
 | `MAGNET_WEBHOOK_URL` / `MAGNET_WEBHOOK_SECRET` | | 两个都设了才开启磁力链接转交，只在**私信**生效：`services/magnetRelay.js` 里内置的白名单用户（可用 `MAGNET_USER_IDS`，Discord 用户 ID 逗号分隔，覆盖内置名单）私信 bot 磁力链接时，bot 会查标题和大小，回一张带「确认／取消」按钮的卡片；按确认后才用签章 webhook 把链接交给 OpenBot（由 OpenBot 的助手加进 PikPak）。其他人、服务器里的磁力链接一律忽略。bot 本身不持有 PikPak 帐密，也不删原消息。同一个磁力 30 分钟内只转交一次，卡片 10 分钟没按就过期。需要 Message Content Intent |
+| `FEEDBACK_WEBHOOK_URL` / `FEEDBACK_WEBHOOK_SECRET` | | 两个都设了才开启「回报 bot 问题」；网址是 OpenBot 接收回报的 webhook，密钥用来签章，格式与磁力转交相同 |
+| `FEEDBACK_DEDUPE_MINUTES` / `FEEDBACK_MAX_PER_USER_PER_DAY` / `FEEDBACK_RECENT_PARSE_DAYS` | | 同一条链接＋症状＋bot 版本合并的时间窗（默认 `1440` 分钟）、每人 24 小时最多开几张新单（默认 `3`）、`/report` 的链接要在几天内的解析记录里（默认 `7`） |
 | `MAGNET_META_LOOKUP` | | 默认开启：查标题时会把磁力的 infohash 发给公开的 torrent 快取（itorrents.org），取回 .torrent 并用 SHA-1 对照 infohash 才采用。设为 `false` 就不对外查询，卡片只显示链接自带的名称 |
 | `BINANCE_API_KEY` / `BINANCE_SECRET` | | 只读 API key |
 | `BYBIT_API_KEY` / `BYBIT_SECRET` | | 只读 API key |

@@ -57,6 +57,7 @@
 | slash 指令（`/x`、「解析链接」）                         | 改了指令定义要提醒跑 `npm run deploy:dev`（只注册到测试 bot）；真实入口截图由 Tess／老板在测试 bot 上验，开发者不自己登入 |
 | `services/sites/chain.js`、`deadline.js`、`video.js`（yt-dlp 参数）、`linkhub.js` 下载 | 空影片自动重试契约（下）：`test/fallback-chain.test.js`、`media-post.test.js`、`ytdlp-args.test.js`、`linkhub-multi-item.test.js`、`line-busy.test.js` 通过，**加上 dev 容器里跑 `test/ytdlp-stub.test.js` 的输出**（假 yt-dlp 的独立子进程测试） |
 | `scripts/repro.js`、`scripts/repro-runner.js` | `test/repro.test.js` 通过，并在 dev 容器里用真实链接对 `--ref current` 与至少一个旧 SHA 各跑一次，贴出 JSON（密钥值不得出现在输出里）；这支脚本不能改成会上传、会读 `index.js` 或会带出环境变量 |
+| `services/botReport.js`、`botReportStore.js`、`openbotWebhook.js`、`commands/utility/report*.js`、`services/mediaPost.js` 的记录与按钮 | 回报功能契约（上）：`test/bot-report.test.js`、`test/media-post-report.test.js`、`test/magnet-relay.test.js`（共用签章）通过；功能默认关，别在没批准的情况下把两个环境变量设进 Doppler |
 
 ### 空影片契约（`test/empty-file.test.js` 已覆盖）
 
@@ -116,6 +117,16 @@ docker exec -u node -w /app <dev 的 portfolio-bot 容器> node scripts/repro.js
 - **不要用 `doppler run`**：脚本自己从 bot 主进程（`node index.js`，工作目录就是这个 repo）按名字只拷 `LINKHUB_API_URL`、`LINKHUB_API_KEY` 两个变量；`DOPPLER_TOKEN`、`TOKEN`（bot token）、admin、webhook 等一律不拷，也不会传给被量测的版本。在 Coolify 容器里这两个变量只在 bot 进程里，PID 1（docker-init）没有它们，只有 `DOPPLER_TOKEN`；脚本也会先看 PID 1，但只认这两个名字。
 - 输出里任何环境变量的值都会被替换成 `[redacted]`；脚本不印环境、不加载 `index.js` 或 `discord.js`，不可能登入 Discord。被量测的版本在子进程里跑，只拿到 `PATH`、yt-dlp／ffmpeg／ffprobe 的路径、`XHS_API_URL` 和上面两个变量，临时目录指向暂存目录。
 - 限制：只比对「交档的是哪一层」，不能指定只走某一层；`content_id` 只来自链接本身，所以 Facebook 分享连结「跳转后的 reel ID」目前量不到；旧版本的 `layer` 是推断的。
+
+### 回报 bot 问题（`services/botReport.js`，第一期：只收件）
+
+- 三个入口共用一张表单：右键 bot 的讯息「回报 bot 问题」、失败讯息下的「回报」按钮、`/report <链接>`。**两个环境变量都设了才开启**（`FEEDBACK_WEBHOOK_URL`、`FEEDBACK_WEBHOOK_SECRET`，Doppler 里，由老板在接收员工的私聊里建好 routine 后再填）；没设就不显示按钮、不存档、不送，和磁力转交一样。
+- 每次 bot 发出结果（成功或失败）都在 `data/bot-reports.json` 记一行上下文：讯息 ID、链接、站点、结果、字节数、秒数、交档的是哪一层、bot 版本（`SOURCE_COMMIT` 前 12 位）。这是因为 bot 的 token 事后查不到 admin 的解析日志，而两个真实 bug 在那里都记成「成功」。
+- 规则（不用 AI）：只收 bot 自己发的讯息；同一条链接＋同一症状＋同一 bot 版本在 24 小时内合并成同一个编号（`FEEDBACK_DEDUPE_MINUTES`）；每人 24 小时最多开 3 张新单，合并不算（`FEEDBACK_MAX_PER_USER_PER_DAY`）；`/report` 的链接必须在这个人 7 天内的解析记录里（`FEEDBACK_RECENT_PARSE_DAYS`），否则只存档、不送；同一个互动 ID 只建一张单。
+- 事件 `bot.feedback_report`，签章与磁力转交共用 `services/openbotWebhook.js`；delivery id 第一次是 `feedback-<编号>`，重送是 `feedback-<编号>-r<次数>`。用户原话只在 `user_note`（旁边有 `user_note_notice`），链接只留域名、路径和少数识别参数，截图只送链接和大小，不送档名栏位。**限制**：Discord 的截图链接路径里本来就有上传者取的档名，不能剥掉。
+- 送不出去（接收端挂了、5xx）会记成 `failed`，用户仍会拿到编号；下次 bot 启动、或有人合并进这张单时重送一次。接收端回 4xx（签章不对、routine 不存在）不重试，但重启时仍会再试一次（只试 24 小时内的、最多 10 张），所以改设定后不用手动处理。
+- 私信通知（修好后告诉回报人）只留接口 `notifyReporter()`，永远回 `{ sent: false, reason: 'disabled' }`：固定文案要老板先批，而且只在修复上了稳定版之后才能发。
+- 要交的证据：`test/bot-report.test.js`、`test/media-post-report.test.js`、`test/repro.test.js` 通过；功能的真实往返在 dev 容器里用真 HTTP 打到本机接收器，由接收器自己用 `crypto` 验签（见开发记录）。**还没验证**：真实 Discord 里点按钮、右键指令、表单与截图上传（指令要 `npm run deploy:dev` 才会出现）。
 
 ### 删原讯息契约（`index.js`）
 

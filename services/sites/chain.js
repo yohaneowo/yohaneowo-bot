@@ -124,17 +124,28 @@ const VIDEO_FILE = /\.(?:mp4|m4v|mov|webm|mkv)$/i;
 // videos of a post with several media): none may be empty, and a video must have a readable length.
 // Without ffprobe there is nothing to judge, so such a file is accepted.
 async function assertUsableResult(result, probe) {
+	const files = [];
 	for (const file of result.files ?? []) {
 		const { size } = await fs.stat(file.path);
 		if (size === 0) throw new EmptyFileError(`${file.name} is 0 bytes`);
-		if (!VIDEO_FILE.test(file.path)) continue;
-		const info = await probe(file.path);
-		if (info?.unavailable) continue;
-		// info.codec is the first video stream's: an audio-only mp4 has a duration but nothing to show.
-		if (!info || !(info.duration > 0) || !info.codec) {
-			throw new EmptyFileError(`${file.name} has no readable video stream or duration (${size} bytes)`);
+		let durationSec = null;
+		if (VIDEO_FILE.test(file.path)) {
+			const info = await probe(file.path);
+			if (!info?.unavailable) {
+				// info.codec is the first video stream's: an audio-only mp4 has a duration but nothing to show.
+				if (!info || !(info.duration > 0) || !info.codec) {
+					throw new EmptyFileError(`${file.name} has no readable video stream or duration (${size} bytes)`);
+				}
+				durationSec = Math.round(info.duration * 100) / 100;
+			}
 		}
+		files.push({ name: file.name, bytes: size, durationSec });
 	}
+	return {
+		files,
+		bytes: files.reduce((sum, file) => sum + file.bytes, 0),
+		durationSec: files.find((file) => file.durationSec !== null)?.durationSec ?? null,
+	};
 }
 
 // rungs: [{ name, repair, enabled(), run(url, dir, maxBytes, onStage) }]. A rung works in its own
@@ -198,7 +209,9 @@ function createFallbackChain({
 				// that only finished after the budget was spent does not count as a success.
 				const result = await runWithSignal(controller.signal, async () => {
 					const fetched = await rung.run(url, rungDir, maxBytes, onStage);
-					await assertUsableResult(fetched, probe);
+					// What was measured and which rung delivered it travel with the result (see botReport.js).
+					fetched.stats = await assertUsableResult(fetched, probe);
+					fetched.layer = rung.name;
 					return fetched;
 				});
 				if (controller.signal.aborted) throw controller.signal.reason;
