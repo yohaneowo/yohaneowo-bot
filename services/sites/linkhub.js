@@ -79,6 +79,23 @@ function pickVideoFormat(formats, maxBytes) {
 	return h264.find(fits) ?? h264[0] ?? combined.find(fits) ?? combined[0] ?? videos[0] ?? null;
 }
 
+// Some posts come back as separate video and audio streams (Facebook reels through LinkHub's yt-dlp
+// adapter: AV1 video-only formats plus one m4a; the site's single files have no codec info, so LinkHub
+// marks them as neither video nor audio and they are passed over). Taking the video-only stream gives a
+// file without sound: every Facebook reel the stable bot posted from 2026-11-18 to 11-20 was silent.
+// This route cannot merge streams, so it fails instead and the chain moves on to the site's own parser
+// (yt-dlp, which picks a file with sound or merges). A video-only stream is still fine when the post
+// has no audio stream at all.
+const isVideoOnly = (format) => format.hasVideo === true && format.hasAudio === false;
+const isAudioOnly = (format) => format.hasAudio === true && format.hasVideo === false;
+
+class SplitStreamsError extends Error {
+	constructor(message) {
+		super(message);
+		this.code = 'SPLIT_STREAMS';
+	}
+}
+
 class GifUnavailableError extends Error {
 	constructor(message, code) {
 		super(message);
@@ -187,6 +204,11 @@ async function downloadItem(item, dir, index, maxBytes) {
 	if (item.type === 'video' || item.type === 'audio') {
 		const format = pickVideoFormat(item.formats, maxBytes);
 		if (!format) return null;
+		if (isVideoOnly(format) && item.formats.some(isAudioOnly)) {
+			throw new SplitStreamsError(
+				`LinkHub offers only a video-only stream (${format.id ?? '?'}, ${format.videoCodec ?? '?'}) and a separate audio stream; downloading it would post a video without sound`,
+			);
+		}
 		const ext = /^[a-z0-9]{2,5}$/i.test(format.ext ?? '') ? format.ext.toLowerCase() : 'mp4';
 		const name = `video-${index}.${ext}`;
 		const filePath = path.join(dir, name);
@@ -273,4 +295,5 @@ module.exports = {
 	// For tests.
 	pickVideoFormat,
 	downloadItem,
+	SplitStreamsError,
 };
