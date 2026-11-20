@@ -823,12 +823,38 @@ test('without a -# link on the first line (or with a link of no supported site) 
 	assert.deepEqual(sent, []);
 });
 
-test('a form opened before a restart has no link to go on: kept, with that reason', async () => {
+const NOT_KEPT = /no longer kept \(bot restarted, form open too long, or too many forms since\)/;
+
+test('a form opened before a restart has no link to go on: kept, with a reason that does not guess', async () => {
 	const feature = makeFeature();
 	const submitted = await report(feature, { customId: 'fb:m:ctx:old-1', id: 'i-after-restart' });
 	assert.match(text(submitted), /这则讯息里找不到原链接/);
-	assert.match(feature.store.getReport(1).archive_detail, /restarted/);
+	assert.match(feature.store.getReport(1).archive_detail, NOT_KEPT);
 	assert.deepEqual(sent, []);
+});
+
+test('a form left open past the time limit no longer has the link: kept, same reason', async () => {
+	const feature = makeFeature();
+	const opener = menuOn({ messageId: 'old-1', content: caption(YOUTUBE), createdTimestamp: OLD_POSTED_AT, id: 'i-open' });
+	await feature.handleContextMenu(opener);
+	clock += 10 * 60 * 1000;
+	const submitted = await report(feature, { customId: 'fb:m:ctx:old-1', id: 'i-late' });
+	assert.match(text(submitted), /这则讯息里找不到原链接/);
+	assert.match(feature.store.getReport(1).archive_detail, NOT_KEPT);
+	assert.deepEqual(sent, []);
+});
+
+test('a link pushed out by more than 100 newer forms is gone: kept, same reason', async () => {
+	const feature = makeFeature();
+	await feature.handleContextMenu(menuOn({ messageId: 'old-0', content: caption(YOUTUBE), createdTimestamp: OLD_POSTED_AT, id: 'i-open-0' }));
+	for (let n = 1; n <= 100; n++) {
+		await feature.handleContextMenu(menuOn({ messageId: `old-${n}`, content: caption(YOUTUBE), createdTimestamp: OLD_POSTED_AT, id: `i-open-${n}` }));
+	}
+	const submitted = await report(feature, { customId: 'fb:m:ctx:old-0', id: 'i-evicted' });
+	assert.match(text(submitted), /这则讯息里找不到原链接/);
+	assert.match(feature.store.getReport(1).archive_detail, NOT_KEPT);
+	const kept = await report(feature, { customId: 'fb:m:ctx:old-100', id: 'i-kept' });
+	assert.match(text(kept), /已收到，编号 #2/, 'the newest one is still there');
 });
 
 test('a message with a record keeps using its record, even when its first line names another link', async () => {

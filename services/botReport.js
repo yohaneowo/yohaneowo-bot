@@ -522,7 +522,9 @@ function createFeature(options = {}) {
 		if (fromMessage?.url) {
 			return { url: fromMessage.url, site: fromMessage.site, context: null, matched: true, contextMissing: true, messageCreatedAt: fromMessage.createdAt, targetMessageId: ref };
 		}
-		return { url: null, site: null, context: null, matched: false, noLink: fromMessage?.reason ?? 'the form was opened before the bot restarted', targetMessageId: ref };
+		// Not kept any more: the bot restarted, the form stayed open past the time limit, or many forms were opened
+		// since. Which one is not known, so the reason says so.
+		return { url: null, site: null, context: null, matched: false, noLink: fromMessage?.reason ?? 'the link read when the form was opened is no longer kept (bot restarted, form open too long, or too many forms since)', targetMessageId: ref };
 	}
 
 	async function handleModalSubmit(interaction) {
