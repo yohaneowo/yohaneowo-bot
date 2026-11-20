@@ -15,6 +15,8 @@ const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 // config: { url, secret }. Retries only network errors and 5xx answers; a 4xx answer (bad signature, unknown
 // routine, ...) will not get better and is thrown at once with `final` set. Retries share the delivery id.
+// Resolves to { status } of the 2xx answer: OpenBot answers 202 when it accepted the event and 200 when it had
+// already seen the delivery id (a duplicate: nothing is started), so callers that need a run must check it.
 async function postSigned(config, { type, data, deliveryId }, options = {}) {
 	const {
 		fetchImpl = fetch,
@@ -40,7 +42,7 @@ async function postSigned(config, { type, data, deliveryId }, options = {}) {
 				body,
 				signal: AbortSignal.timeout(timeoutMs),
 			});
-			if (response.ok) return;
+			if (response.ok) return { status: response.status };
 			if (response.status < 500) throw Object.assign(new Error(`webhook answered ${response.status}`), { final: true });
 			lastError = new Error(`webhook answered ${response.status}`);
 		}

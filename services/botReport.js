@@ -307,9 +307,19 @@ function createFeature(options = {}) {
 		const deliveryId = deliveryIdFor(config.deliveryPrefix ?? '', report.id, attempts);
 		getStore().setDelivery(report.id, { attempts: attempts + 1, last_at: now() });
 		try {
-			await send({ url: config.url, secret: config.secret }, { type: EVENT_TYPE, data: buildPayload(report), deliveryId });
-			getStore().setDelivery(report.id, { status: 'sent', last_error: null });
-			return true;
+			const answer = await send({ url: config.url, secret: config.secret }, { type: EVENT_TYPE, data: buildPayload(report), deliveryId });
+			// Only 202 means OpenBot took the event. 200 means it had seen this delivery id already and started
+			// nothing (2026-11-20: the stable bot's #2 collided with the test bot's feedback-2 and looked sent).
+			if (answer?.status === 202) {
+				getStore().setDelivery(report.id, { status: 'sent', last_error: null });
+				return true;
+			}
+			if (answer?.status === 200) {
+				getStore().setDelivery(report.id, { status: 'duplicate', last_error: `webhook answered 200: ${deliveryId} was already received, nothing started` });
+				log.warn(`[report] Report #${report.id} was not taken: ${deliveryId} is a duplicate delivery id (webhook answered 200)`);
+				return false;
+			}
+			throw new Error(`webhook answered ${answer?.status ?? 'without a status'}, not 202`);
 		}
 		catch (error) {
 			getStore().setDelivery(report.id, { status: 'failed', last_error: String(error.message).slice(0, 120) });
