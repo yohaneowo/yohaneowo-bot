@@ -6,7 +6,7 @@ const crypto = require('node:crypto');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
-const { createFeature, loadConfig, buildPayload, canonicalUrl, normalizeScreenshots, botVersion, SYMPTOMS, EVENT_TYPE, USER_NOTE_NOTICE } = require('../services/botReport');
+const { createFeature, loadConfig, deliveryIdFor, buildPayload, canonicalUrl, normalizeScreenshots, botVersion, SYMPTOMS, EVENT_TYPE, USER_NOTE_NOTICE } = require('../services/botReport');
 const { createStore, FILE_NAME, DAY_MS } = require('../services/botReportStore');
 const { postSigned } = require('../services/openbotWebhook');
 
@@ -675,6 +675,70 @@ test('a failed delivery does not change what the person is told; it is sent agai
 	assert.deepEqual(sent.map((event) => event.deliveryId), ['feedback-1', 'feedback-1-r1']);
 	assert.equal(feature.store.getReport(1).delivery.status, 'sent');
 	assert.equal(await feature.redeliverPending(), 0, 'nothing left to send');
+});
+
+// ---------------------------------------------------------------- delivery ids per environment
+// The receiver ignores a delivery id it has seen (2xx, no run) and every environment numbers its reports from
+// 1, so the stable bot's #2 was dropped as a repeat of the test bot's #2 (2026-11-20).
+
+test('without FEEDBACK_DELIVERY_PREFIX the delivery ids keep the old form', async () => {
+	assert.equal(loadConfig(ENABLED_ENV).deliveryPrefix, '');
+	assert.equal(loadConfig({ ...ENABLED_ENV, FEEDBACK_DELIVERY_PREFIX: '' }).deliveryPrefix, '');
+	assert.equal(loadConfig({ ...ENABLED_ENV, FEEDBACK_DELIVERY_PREFIX: '  ' }).deliveryPrefix, '');
+	assert.equal(deliveryIdFor('', 2, 0), 'feedback-2');
+	assert.equal(deliveryIdFor('', 2, 1), 'feedback-2-r1');
+	const feature = makeFeature();
+	record(feature);
+	await report(feature);
+	assert.deepEqual(sent.map((event) => event.deliveryId), ['feedback-1']);
+});
+
+test('the same report number in two environments gets two different delivery ids', async () => {
+	const ids = [];
+	for (const prefix of [undefined, 'prd']) {
+		const feature = makeFeature({
+			env: prefix ? { ...ENABLED_ENV, FEEDBACK_DELIVERY_PREFIX: prefix } : ENABLED_ENV,
+			store: createStore({ dir: fs.mkdtempSync(path.join(dir, 'env-')), now, log }),
+			send: async (config, event) => {
+				ids.push(event.deliveryId);
+			},
+		});
+		record(feature);
+		await report(feature);
+		assert.equal(feature.store.getReport(1).delivery.status, 'sent');
+	}
+	assert.deepEqual(ids, ['feedback-1', 'feedback-prd-1']);
+});
+
+test('the prefix is kept to lowercase letters and digits, so "prd-" and "PRD" also mean prd', () => {
+	for (const value of ['prd', 'prd-', 'PRD', ' prd ', 'p-r-d']) {
+		assert.equal(loadConfig({ ...ENABLED_ENV, FEEDBACK_DELIVERY_PREFIX: value }).deliveryPrefix, 'prd', JSON.stringify(value));
+	}
+	assert.equal(loadConfig({ ...ENABLED_ENV, FEEDBACK_DELIVERY_PREFIX: 'a'.repeat(40) }).deliveryPrefix, 'a'.repeat(16));
+	assert.equal(loadConfig({ ...ENABLED_ENV, FEEDBACK_DELIVERY_PREFIX: '--' }).deliveryPrefix, '', 'nothing usable left: old form');
+});
+
+test('with a prefix, a retry keeps the prefix and differs from every first try', async () => {
+	let up = false;
+	const feature = makeFeature({
+		env: { ...ENABLED_ENV, FEEDBACK_DELIVERY_PREFIX: 'prd' },
+		send: async (config, event) => {
+			sent.push(event);
+			if (!up) throw new Error('webhook answered 503');
+		},
+	});
+	record(feature);
+	await report(feature);
+	up = true;
+	assert.equal(await feature.redeliverPending(), 1);
+	assert.deepEqual(sent.map((event) => event.deliveryId), ['feedback-prd-1', 'feedback-prd-1-r1']);
+	const everyId = new Set();
+	for (const prefix of ['', 'prd', 'dev']) {
+		for (const reportId of [1, 2, 11, 12]) {
+			for (const attempt of [0, 1, 2]) everyId.add(deliveryIdFor(prefix, reportId, attempt));
+		}
+	}
+	assert.equal(everyId.size, 3 * 4 * 3, 'no two (environment, report, attempt) share an id');
 });
 
 test('someone merging into a report that never arrived triggers another delivery; into one that arrived does not', async () => {

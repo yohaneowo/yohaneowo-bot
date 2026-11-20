@@ -75,6 +75,19 @@ function positiveInt(value, fallback) {
 	return Number.isInteger(number) && number > 0 ? number : fallback;
 }
 
+// The receiving side drops a delivery id it has seen before (it answers 2xx and does nothing), and report
+// numbers start at 1 in every environment, so each environment that shares the webhook needs its own prefix:
+// FEEDBACK_DELIVERY_PREFIX=prd gives feedback-prd-2. Only lowercase letters and digits are kept (so "prd-"
+// and "PRD" both mean prd); empty or unset keeps the old form feedback-2.
+function deliveryPrefix(value) {
+	return String(value ?? '').toLowerCase().replace(/[^a-z0-9]/g, '').slice(0, 16);
+}
+
+function deliveryIdFor(prefix, reportId, attempt) {
+	const base = prefix ? `feedback-${prefix}-${reportId}` : `feedback-${reportId}`;
+	return attempt === 0 ? base : `${base}-r${attempt}`;
+}
+
 function loadConfig(env = process.env) {
 	const url = String(env.FEEDBACK_WEBHOOK_URL ?? '').trim();
 	const secret = String(env.FEEDBACK_WEBHOOK_SECRET ?? '');
@@ -82,6 +95,7 @@ function loadConfig(env = process.env) {
 		enabled: isHttpUrl(url) && secret.length > 0,
 		url,
 		secret,
+		deliveryPrefix: deliveryPrefix(env.FEEDBACK_DELIVERY_PREFIX),
 		dedupeWindowMs: positiveInt(env.FEEDBACK_DEDUPE_MINUTES, DEFAULT_DEDUPE_MINUTES) * 60 * 1000,
 		maxPerUserPerDay: positiveInt(env.FEEDBACK_MAX_PER_USER_PER_DAY, DEFAULT_MAX_PER_USER_PER_DAY),
 		maxSentPerDay: positiveInt(env.FEEDBACK_MAX_SENT_PER_DAY, DEFAULT_MAX_SENT_PER_DAY),
@@ -290,7 +304,7 @@ function createFeature(options = {}) {
 
 	async function deliver(report) {
 		const attempts = report.delivery.attempts;
-		const deliveryId = attempts === 0 ? `feedback-${report.id}` : `feedback-${report.id}-r${attempts}`;
+		const deliveryId = deliveryIdFor(config.deliveryPrefix ?? '', report.id, attempts);
 		getStore().setDelivery(report.id, { attempts: attempts + 1, last_at: now() });
 		try {
 			await send({ url: config.url, secret: config.secret }, { type: EVENT_TYPE, data: buildPayload(report), deliveryId });
@@ -526,6 +540,7 @@ module.exports = {
 	NOTE_MAX,
 	SCREENSHOT_MAX,
 	loadConfig,
+	deliveryIdFor,
 	botVersion,
 	cleanNote,
 	canonicalUrl,
