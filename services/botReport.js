@@ -59,7 +59,26 @@ const DEFAULT_RECENT_PARSE_DAYS = 7;
 const ARCHIVE_REASONS = {
 	NOT_RECENT: 'not_in_recent_parses',
 	DAILY_LIMIT: 'daily_limit',
+	NO_LINK: 'no_link_in_message',
 };
+
+// A result message the bot posted starts with the link it parsed: `-# <link>`, or `-# <@user> 分享 · <link>`
+// (mediaPost.js formatCaption). For a message posted before the bot kept a record of its results, that line
+// is all there is to go on. Only the link is taken, and only when it is a link of a supported site; the rest
+// of the message (the post's own text) is never read as anything.
+const CAPTION_LINK = /^-# (?:<@!?\d{1,25}> 分享 · )?<(https?:\/\/[^\s<>]{1,2000})>$/;
+
+// { url, site, createdAt } or { reason } for a message of the bot that has no recorded result.
+function linkFromMessage(message) {
+	const firstLine = String(message?.content ?? '').split('\n', 1)[0];
+	const url = CAPTION_LINK.exec(firstLine)?.[1];
+	if (!url) return { reason: 'the message does not start with a -# <link> line' };
+	if (!isHttpUrl(url)) return { reason: 'the link in the message is not an http(s) link' };
+	const site = findSupportedSite(url);
+	if (!site) return { reason: 'the link in the message is not of a supported site' };
+	const createdAt = Number(message.createdTimestamp);
+	return { url, site: site.name, createdAt: Number.isFinite(createdAt) && createdAt > 0 ? new Date(createdAt).toISOString() : null };
+}
 
 function isHttpUrl(value) {
 	try {
@@ -196,20 +215,27 @@ function payloadScreenshots(screenshots) {
 // labelled by `user_note_notice` as their words and not instructions, and the screenshot links in
 // `screenshots`. User text is in those two fields and nowhere else. A new field here is a new input for that
 // agent and needs a decision first.
+// `context_missing` (decision of 2026-11-20): the reported message was posted before the bot kept a record
+// of its results, so the link was taken from the message itself; then `message_created_at` is when that
+// message was posted, and the bot version and its record of the result (outcome, bytes, seconds, layer) are
+// null: they are unknown, and are never filled in from another message.
 function buildPayload(report) {
 	const context = report.context;
+	const missing = Boolean(report.context_missing);
 	return {
 		report_id: report.id,
 		site: report.site ?? null,
 		url: report.url ? canonicalUrl(report.url) : null,
 		symptom: report.symptom,
-		bot_version: report.bot_version,
-		message_id: context?.message_id ?? null,
+		bot_version: missing ? null : report.bot_version,
+		message_id: context?.message_id ?? report.target_message_id ?? null,
+		context_missing: missing,
+		message_created_at: missing ? (report.message_created_at ?? null) : null,
 		screenshot_count: (report.screenshots ?? []).length,
-		outcome: fixedOutcome(context?.outcome),
-		bytes: measurement(context?.bytes),
-		duration_sec: measurement(context?.duration_sec),
-		layer: fixedLayer(context?.layer),
+		outcome: missing ? null : fixedOutcome(context?.outcome),
+		bytes: missing ? null : measurement(context?.bytes),
+		duration_sec: missing ? null : measurement(context?.duration_sec),
+		layer: missing ? null : fixedLayer(context?.layer),
 		user_note: cleanNote(report.user_note),
 		user_note_notice: USER_NOTE_NOTICE,
 		screenshots: payloadScreenshots(report.screenshots),
@@ -253,6 +279,9 @@ function createFeature(options = {}) {
 	} = options;
 	let store = givenStore;
 	const commandTokens = new Map();
+	// What the reported message itself says (linkFromMessage), kept from opening the form to sending it, for
+	// messages the bot has no record of. Keyed by person and message, bounded like the /report tokens.
+	const messageLinks = new Map();
 	const inFlight = new Set();
 
 	function getStore() {
@@ -265,6 +294,17 @@ function createFeature(options = {}) {
 			if (now() - entry.at >= COMMAND_TOKEN_TTL_MS) commandTokens.delete(token);
 		}
 		while (commandTokens.size > MAX_COMMAND_TOKENS) commandTokens.delete(commandTokens.keys().next().value);
+		for (const [key, entry] of messageLinks) {
+			if (now() - entry.at >= COMMAND_TOKEN_TTL_MS) messageLinks.delete(key);
+		}
+		while (messageLinks.size > MAX_COMMAND_TOKENS) messageLinks.delete(messageLinks.keys().next().value);
+	}
+
+	// Only for a message the bot itself posted (the callers check the author first) and has no record of.
+	function rememberMessageLink(userId, message) {
+		if (getStore().findContextByMessage(message.id)) return;
+		pruneTokens();
+		messageLinks.set(`${userId}:${message.id}`, { ...linkFromMessage(message), at: now() });
 	}
 
 	function failureComponents() {
@@ -361,6 +401,7 @@ function createFeature(options = {}) {
 		if (!isBotMessage(interaction, interaction.message)) {
 			return interaction.reply(ephemeral('只能回报 bot 自己发出的讯息。'));
 		}
+		rememberMessageLink(interaction.user.id, interaction.message);
 		return showModal(interaction, 'btn', interaction.message.id);
 	}
 
@@ -369,6 +410,7 @@ function createFeature(options = {}) {
 		if (!isBotMessage(interaction, interaction.targetMessage)) {
 			return interaction.reply(ephemeral('只能回报 bot 自己发出的讯息。'));
 		}
+		rememberMessageLink(interaction.user.id, interaction.targetMessage);
 		return showModal(interaction, 'ctx', interaction.targetMessage.id);
 	}
 
@@ -417,7 +459,8 @@ function createFeature(options = {}) {
 
 		const context = target.context;
 		const urlKey = target.url ? normalizeUrlKey(target.url) : null;
-		const reportVersion = context?.version ?? 'unknown';
+		// Without a record the version is unknown (null), not the version running now.
+		const reportVersion = context?.version ?? (target.contextMissing ? null : 'unknown');
 		if (urlKey) {
 			const same = getStore().findDuplicate({ urlKey, symptom, version: reportVersion, windowMs: config.dedupeWindowMs });
 			if (same) {
@@ -428,8 +471,15 @@ function createFeature(options = {}) {
 		if (getStore().countOpenedBy(userId, DAY_MS) >= config.maxPerUserPerDay) return { kind: 'limited' };
 
 		let archiveReason = null;
-		if (!(context && target.matched)) archiveReason = ARCHIVE_REASONS.NOT_RECENT;
-		else if (getStore().countQueued(DAY_MS) >= config.maxSentPerDay) archiveReason = ARCHIVE_REASONS.DAILY_LIMIT;
+		let archiveDetail = null;
+		const known = (context && target.matched) || target.contextMissing;
+		if (!known) {
+			archiveReason = target.noLink ? ARCHIVE_REASONS.NO_LINK : ARCHIVE_REASONS.NOT_RECENT;
+			archiveDetail = target.noLink ?? null;
+		}
+		else if (getStore().countQueued(DAY_MS) >= config.maxSentPerDay) {
+			archiveReason = ARCHIVE_REASONS.DAILY_LIMIT;
+		}
 		const report = getStore().createReport({
 			source,
 			symptom,
@@ -439,8 +489,12 @@ function createFeature(options = {}) {
 			site: target.site,
 			user_id: userId,
 			context: context ?? null,
+			target_message_id: target.targetMessageId ?? null,
+			context_missing: Boolean(target.contextMissing),
+			message_created_at: target.messageCreatedAt ?? null,
 			eligible: archiveReason === null,
 			archive_reason: archiveReason,
+			archive_detail: archiveDetail,
 			bot_version: reportVersion,
 			interaction_ids: [interactionId],
 			screenshots: shots,
@@ -460,8 +514,15 @@ function createFeature(options = {}) {
 			const context = getStore().findRecentContext({ userId, urlKey: normalizeUrlKey(pending.url), withinMs: config.recentParseMs });
 			return { url: pending.url, site: pending.siteName, context, matched: Boolean(context), pending: ref };
 		}
+		// The record of exactly this message, never one of another message with the same link.
 		const context = getStore().findContextByMessage(ref);
-		return { url: context?.url ?? null, site: context?.site ?? null, context, matched: Boolean(context) };
+		if (context) return { url: context.url ?? null, site: context.site ?? null, context, matched: true, targetMessageId: ref };
+		pruneTokens();
+		const fromMessage = messageLinks.get(`${userId}:${ref}`);
+		if (fromMessage?.url) {
+			return { url: fromMessage.url, site: fromMessage.site, context: null, matched: true, contextMissing: true, messageCreatedAt: fromMessage.createdAt, targetMessageId: ref };
+		}
+		return { url: null, site: null, context: null, matched: false, noLink: fromMessage?.reason ?? 'the form was opened before the bot restarted', targetMessageId: ref };
 	}
 
 	async function handleModalSubmit(interaction) {
@@ -494,7 +555,9 @@ function createFeature(options = {}) {
 				created: `已收到，编号 #${id}。${droppedText}`,
 				duplicate: `已收到，编号 #${id}。`,
 				merged: `这个问题已经有人回报过了，编号 #${id}，你的回报并进去了。${outcome.report.eligible ? '' : keptOnly}`,
-				archived: `已收到并存档，编号 #${id}。这条链接不在你近期的解析记录里，所以不会排进自动重现。${droppedText}`,
+				archived: outcome.report.archive_reason === ARCHIVE_REASONS.NO_LINK
+					? `已收到并存档，编号 #${id}。这则讯息里找不到原链接，所以不会排进自动重现。${droppedText}`
+					: `已收到并存档，编号 #${id}。这条链接不在你近期的解析记录里，所以不会排进自动重现。${droppedText}`,
 				limitedToday: `已收到并存档，编号 #${id}。全站最近 24 小时送去自动重现的名额（${config.maxSentPerDay} 张）已经用完，这张只存档、不会排进自动重现；名额释放后如果问题还在，可以再回报。${droppedText}`,
 			};
 			await interaction.reply(ephemeral(answers[outcome.kind]));
