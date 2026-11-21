@@ -40,6 +40,9 @@ const MAX_TEXT_LENGTH = 1500;
 // The first line of everything the bot posts about a link, result or not: the link itself (in <> so Discord
 // shows no preview), after who shared it. A failure answering /x is the only place that link is visible (there
 // is no message from the person), and "report a bot problem" reads it back from this line (botReport.js).
+// That line can mention who shared the link; no answer about a link should notify them.
+const NO_MENTIONS = { parse: [] };
+
 function linkLine(url, sharerId) {
 	return `-# ${sharerId ? `<@${sharerId}> 分享 · ` : ''}<${url}>`;
 }
@@ -92,7 +95,7 @@ async function postMediaInSiteScope({ url, maxBytes, sharerId, update, logContex
 
 	if (isMediaQueueFull()) {
 		reportBusy(url, logContext);
-		await setStatus(`${linkLine(url, sharerId)}\n⏳ 目前处理中的链接太多，请稍后再试`);
+		await setStatus({ content: `${linkLine(url, sharerId)}\n⏳ 目前处理中的链接太多，请稍后再试`, allowedMentions: NO_MENTIONS });
 		return false;
 	}
 
@@ -117,7 +120,7 @@ async function postMediaInSiteScope({ url, maxBytes, sharerId, update, logContex
 		const sent = await update({
 			content: formatCaption(media, url, sharerId),
 			files: media.files.map((file) => ({ attachment: file.path, name: file.name })),
-			allowedMentions: { parse: [] },
+			allowedMentions: NO_MENTIONS,
 		});
 		media.log.info('posted to Discord');
 		logResult('success', { file_count: media.files.length, compressed: Boolean(media.compressed) });
@@ -135,7 +138,7 @@ async function postMediaInSiteScope({ url, maxBytes, sharerId, update, logContex
 		const failureText = `${linkLine(url, sharerId)}\n${error.userMessage ? `⚠️ ${error.userMessage}` : '❌ 解析失败了 😢'}`;
 		const feature = getFeature();
 		const components = feature.failureComponents();
-		const failed = await setStatus(components.length ? { content: failureText, components } : failureText);
+		const failed = await setStatus({ content: failureText, allowedMentions: NO_MENTIONS, ...(components.length ? { components } : {}) });
 		feature.recordResult({ message: failed, logContext, url, site: findSupportedSite(url)?.name, outcome: 'failed', error });
 		return false;
 	}

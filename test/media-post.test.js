@@ -61,7 +61,7 @@ test('when every route is empty the post is not counted as posted (so the origin
 	};
 	const { updates, promise } = run();
 	assert.equal(await promise, false, 'postMedia returns false, so index.js never deletes the message');
-	assert.equal(updates.at(-1), `-# <${URL_A}>\n⚠️ 下载到的影片是空的或已损坏，请稍后再试`);
+	assert.equal(updates.at(-1).content, `-# <${URL_A}>\n⚠️ 下载到的影片是空的或已损坏，请稍后再试`);
 	assert.equal(reports.length, 1);
 	assert.equal(reports[0].result, 'failed');
 	assert.match(reports[0].error_message, /^empty_file: tried=local,local-alt; site_consecutive=1;/);

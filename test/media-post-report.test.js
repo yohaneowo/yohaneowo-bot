@@ -135,7 +135,7 @@ test('with the feature off the failure message is the plain text it always was, 
 		};
 		const { updates, promise } = run();
 		assert.equal(await promise, false);
-		assert.equal(updates.at(-1), `-# <${URL_A}>\n❌ 解析失败了 😢`);
+		assert.deepEqual(updates.at(-1), { content: `-# <${URL_A}>\n❌ 解析失败了 😢`, allowedMentions: { parse: [] } }, 'no button, nobody notified');
 		assert.equal(fs.existsSync(path.join(dataDir, 'bot-reports.json')), false);
 	}
 	finally {
@@ -165,6 +165,7 @@ test('in a channel the failure line names who shared the link, like a posted res
 	const { updates, promise } = run({ sharerId: '123456789012345678' });
 	assert.equal(await promise, false);
 	assert.equal(updates.at(-1).content.split('\n')[0], `-# <@123456789012345678> 分享 · <${URL_A}>`);
+	assert.deepEqual(updates.at(-1).allowedMentions, { parse: [] }, 'the mention does not notify the person');
 });
 
 test('a failure message can be reported later even without a record: its first line gives the link back', async () => {
@@ -188,9 +189,12 @@ test('when two downloads are already running, the "too busy" answer also shows t
 	};
 	const first = run();
 	const second = run();
-	const third = run();
+	const third = run({ sharerId: '123456789012345678' });
 	assert.equal(await third.promise, false);
-	assert.equal(third.updates.at(-1), `-# <${URL_A}>\n⏳ 目前处理中的链接太多，请稍后再试`);
+	assert.deepEqual(third.updates.at(-1), {
+		content: `-# <@123456789012345678> 分享 · <${URL_A}>\n⏳ 目前处理中的链接太多，请稍后再试`,
+		allowedMentions: { parse: [] },
+	});
 	release();
 	await Promise.all([first.promise, second.promise]);
 });
