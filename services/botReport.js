@@ -616,6 +616,8 @@ module.exports = {
 	SCREENSHOT_MAX,
 	loadConfig,
 	deliveryIdFor,
+	// For tests: the first line of the bot's own messages that reports read the link back from.
+	CAPTION_LINK_FOR_TESTS: CAPTION_LINK,
 	botVersion,
 	cleanNote,
 	canonicalUrl,

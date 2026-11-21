@@ -37,11 +37,17 @@ function getInteractionUploadLimitBytes(interaction) {
 const MAX_TEXT_LENGTH = 1500;
 
 // The original link message may get deleted, so the caption carries the link (and sharer if given).
+// The first line of everything the bot posts about a link, result or not: the link itself (in <> so Discord
+// shows no preview), after who shared it. A failure answering /x is the only place that link is visible (there
+// is no message from the person), and "report a bot problem" reads it back from this line (botReport.js).
+function linkLine(url, sharerId) {
+	return `-# ${sharerId ? `<@${sharerId}> 分享 · ` : ''}<${url}>`;
+}
+
 function formatCaption(media, url, sharerId) {
 	const text = media.text.length > MAX_TEXT_LENGTH ? `${media.text.slice(0, MAX_TEXT_LENGTH)}…` : media.text;
-	const sharer = sharerId ? `<@${sharerId}> 分享 · ` : '';
 	return [
-		`-# ${sharer}<${url}>`,
+		linkLine(url, sharerId),
 		media.author ? `**${media.author}**` : null,
 		text || null,
 		media.compressed ? '-# 原片超过上传上限，已压缩' : null,
@@ -86,7 +92,7 @@ async function postMediaInSiteScope({ url, maxBytes, sharerId, update, logContex
 
 	if (isMediaQueueFull()) {
 		reportBusy(url, logContext);
-		await setStatus('⏳ 目前处理中的链接太多，请稍后再试');
+		await setStatus(`${linkLine(url, sharerId)}\n⏳ 目前处理中的链接太多，请稍后再试`);
 		return false;
 	}
 
@@ -126,7 +132,7 @@ async function postMediaInSiteScope({ url, maxBytes, sharerId, update, logContex
 			error_message: error.code === 'EMPTY_FILE' ? `empty_file: ${error.detail ?? error.message}` : error.message,
 		});
 		await pendingEdit;
-		const failureText = error.userMessage ? `⚠️ ${error.userMessage}` : '❌ 解析失败了 😢';
+		const failureText = `${linkLine(url, sharerId)}\n${error.userMessage ? `⚠️ ${error.userMessage}` : '❌ 解析失败了 😢'}`;
 		const feature = getFeature();
 		const components = feature.failureComponents();
 		const failed = await setStatus(components.length ? { content: failureText, components } : failureText);

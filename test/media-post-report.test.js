@@ -102,6 +102,7 @@ test('a failure message carries the 回报 button, and the failure is remembered
 
 	const last = updates.at(-1);
 	assert.equal(typeof last, 'object');
+	assert.equal(last.content.split('\n')[0], `-# <${URL_A}>`, 'the link is on the first line');
 	assert.match(last.content, /下载到的影片是空的或已损坏/);
 	assert.equal(last.components.length, 1);
 	assert.equal(last.components[0].toJSON().components[0].custom_id, 'fb:open');
@@ -134,7 +135,7 @@ test('with the feature off the failure message is the plain text it always was, 
 		};
 		const { updates, promise } = run();
 		assert.equal(await promise, false);
-		assert.equal(updates.at(-1), '❌ 解析失败了 😢');
+		assert.equal(updates.at(-1), `-# <${URL_A}>\n❌ 解析失败了 😢`);
 		assert.equal(fs.existsSync(path.join(dataDir, 'bot-reports.json')), false);
 	}
 	finally {
@@ -142,6 +143,56 @@ test('with the feature off the failure message is the plain text it always was, 
 		process.env.FEEDBACK_WEBHOOK_SECRET = saved.secret;
 		resetFeatureForTests();
 	}
+});
+
+// Stable #3 (2026-11-21): a 263-second video asked for with /x could not be compressed under 9.8 MB; the answer
+// said to watch it on the site but did not show the link, and with /x there is no message of the person's either.
+test('a video too long to compress, asked for with /x: the answer shows the link, then the reason', async () => {
+	const { UserFacingError } = require('../services/sites/errors');
+	fakeMedia.impl = async () => {
+		throw Object.assign(new UserFacingError('影片太长，压缩后会太糊，建议直接到 Facebook 观看'), { code: 'VIDEO_TOO_LONG' });
+	};
+	const { updates, promise } = run({ logContext: { source: 'command', group_external_id: 'guild-1', user_external_id: 'user-1', user_name: 'tester' } });
+	assert.equal(await promise, false);
+	assert.equal(updates.at(-1).content, `-# <${URL_A}>\n⚠️ 影片太长，压缩后会太糊，建议直接到 Facebook 观看`);
+	assert.equal(updates.at(-1).components.length, 1, 'the 回报 button is still there');
+});
+
+test('in a channel the failure line names who shared the link, like a posted result', async () => {
+	fakeMedia.impl = async () => {
+		throw new Error('boom');
+	};
+	const { updates, promise } = run({ sharerId: '123456789012345678' });
+	assert.equal(await promise, false);
+	assert.equal(updates.at(-1).content.split('\n')[0], `-# <@123456789012345678> 分享 · <${URL_A}>`);
+});
+
+test('a failure message can be reported later even without a record: its first line gives the link back', async () => {
+	fakeMedia.impl = async () => {
+		throw new Error('boom');
+	};
+	const { updates, promise } = run();
+	await promise;
+	const { CAPTION_LINK_FOR_TESTS } = require('../services/botReport');
+	assert.equal(CAPTION_LINK_FOR_TESTS.exec(updates.at(-1).content.split('\n')[0])?.[1], URL_A);
+});
+
+test('when two downloads are already running, the "too busy" answer also shows the link', async () => {
+	let release;
+	const gate = new Promise((resolve) => {
+		release = resolve;
+	});
+	fakeMedia.impl = async () => {
+		await gate;
+		throw new Error('done');
+	};
+	const first = run();
+	const second = run();
+	const third = run();
+	assert.equal(await third.promise, false);
+	assert.equal(third.updates.at(-1), `-# <${URL_A}>\n⏳ 目前处理中的链接太多，请稍后再试`);
+	release();
+	await Promise.all([first.promise, second.promise]);
 });
 
 test('a Discord edit that returns nothing does not break posting', async () => {
