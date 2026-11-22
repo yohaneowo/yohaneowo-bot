@@ -9,7 +9,7 @@
 - 用中文回复。代码注释用英文，风格跟周围一致。
 - 这是**原始码公开的 repo**（PolyForm Noncommercial 1.0.0：非商业免费，商业用途需另行授权，见 README 的「授权」一节；不要称它「开源」）：文档、注释、commit 讯息不写个人资讯或金钥。复制第三方程式码或加入素材前，先确认它的授权允许商业版一起使用。
 - 代码风格以 ESLint 为准（tab 缩进、`brace-style: stroustrup`），改完跑 `npx eslint .`。Prettier 跟 ESLint 冲突时听 ESLint。
-- 用户用 SourceTree 管 git：只有被要求时才 commit / push。commit 讯息用中文摘要，结尾加 `Co-Authored-By`。
+- 用户用 SourceTree 管 git。做事分界（2026-11-17 起；2026-11-22 确认 Claude Code 与任何 agent 直接在 repo 里工作也适用）：可撤回的事先做完再报告；本地 commit、push `develop`、上线 dev 不用问。仍要先问用户：合并或上线到 `main` 与正式站（下一条的修复类常设例外除外）、git push 到 `main`、花钱、对外发文、删档、动 Cloudflare／DNS、改线上 key／额度；合进 `main` 要用户在 dev 看过并明说「合并／上线／发布」。完成要附验证证据，并写清怎么回退；仍要过部署闸门（一次一个建置、可用内存够、避开 02:00–03:45、看队列；正式站一次只部署一个 app：admin → site → bot）。commit 讯息用中文摘要，结尾加 `Co-Authored-By`。
 - 分支：`develop` 是测试版（测试 bot），`main` 是稳定版。发布稳定版 = 把 `develop` 快进合并到 `main`；没有老板确认不要合并进 `main`。**常设例外（老板 2026-11-19）**：「反馈→重现→修复」流程里的 bot 修复，若 ① 已重现成功并留有证据（字节数、秒数、版本）、② 维护员_Tess 独立复核通过，上线稳定版不必再问老板；上线前通知秘书或 King（通知不是批准），部署闸门照旧。不适用：新功能（含反馈收件功能本身）、还没重现的防护性修改（仍要老板逐次点头）、别的项目。
 - `node_modules` 有一部分还被 git 追踪（历史遗留），**永远不要 stage `node_modules/.package-lock.json`**；也尽量不要装新套件，能用 `fetch` 直接调 API 就不加 SDK。
 - 密钥在 Doppler（项目 `yohaneowo-bot`：`dev` = 测试版，`prd` = 稳定版），不再用 `.env` 文件；npm 脚本都包在 `doppler run` 里。不要印出值（`doppler secrets` 会印出，用 `--only-names`）。要确认某个变量有没有设，只看「有没有值」。新电脑先 `doppler login`，再在本目录 `doppler setup`。Git Bash 里执行 `doppler` 要加 `env -u PWD`（它会读 Unix 格式的 `PWD`，找不到登录状态）。`config.json` 只有 clientId / guildId。
