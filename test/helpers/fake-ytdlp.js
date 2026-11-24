@@ -29,7 +29,7 @@ else {
 	else {
 		const made = spawnSync(
 			'ffmpeg',
-			['-loglevel', 'error', '-f', 'lavfi', '-i', 'testsrc=size=320x240:rate=15', '-t', '2', '-pix_fmt', 'yuv420p', '-c:v', 'libx264', '-y', out],
+			['-loglevel', 'error', '-f', 'lavfi', '-i', 'testsrc=size=640x360:rate=15', '-t', '2', '-pix_fmt', 'yuv420p', '-c:v', 'libx264', '-y', out],
 			{ encoding: 'utf8' },
 		);
 		if (made.status !== 0) {

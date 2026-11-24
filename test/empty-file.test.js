@@ -65,6 +65,37 @@ test('a normal file passes', async () => {
 	assert.deepEqual(result, { filePath: file, compressed: false });
 });
 
+test('Discord rejects a 240p YouTube source even when it fits, and LINE keeps its previous behavior', async () => {
+	const file = writeFile('video.mp4', 500 * 1000);
+	const probeFn = async () => ({ width: 240, height: 426, codec: 'h264', duration: 12.5 });
+	await assert.rejects(
+		fitVideoToLimit(file, dir, LIMIT, undefined, undefined, { probeFn, youtube: true }),
+		{ code: 'VIDEO_TOO_BLURRY' },
+	);
+	const result = await fitVideoToLimit(file, dir, LIMIT, undefined, undefined, {
+		probeFn,
+		youtube: true,
+		allowLowQualityYouTube: true,
+	});
+	assert.deepEqual(result, { filePath: file, compressed: false });
+});
+
+test('Discord keeps a 360p YouTube video that fits at its original quality', async () => {
+	const file = writeFile('video.mp4', 500 * 1000);
+	const result = await fitVideoToLimit(file, dir, LIMIT, undefined, undefined, { probeFn: fakeProbe, youtube: true });
+	assert.deepEqual(result, { filePath: file, compressed: false });
+});
+
+test('Discord declines oversized YouTube videos that would need a bitrate below the shared floor', async () => {
+	const file = writeFile('video.mp4', MIN_VIDEO_BYTES);
+	fs.truncateSync(file, 28_400_000);
+	await assert.rejects(
+		fitVideoToLimit(file, dir, 20_552_089, undefined, 712, { probeFn: fakeProbe, youtube: true }),
+		{ code: 'VIDEO_TOO_LONG' },
+	);
+	assert.equal(fs.existsSync(path.join(dir, 'compressed.mp4')), false);
+});
+
 test('a big file ffprobe cannot read is rejected even if the site reported a duration', async () => {
 	const file = writeFile('video.mp4', 500 * 1000, 'GARBAGE');
 	await assert.rejects(

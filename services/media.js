@@ -19,8 +19,8 @@ const { createJob, jobLogger, runInJob, formatMb } = require('./mediaLog');
 // returns { files, author, text, compressed, note? } — note is an optional line shown under the post.
 const fetchVideoAlt = (url, dir, maxBytes, onStage) =>
 	fetchVideo(url, dir, maxBytes, onStage, { strategy: 'alt' });
-const fetchYouTubeAlt = (url, dir, maxBytes, onStage) =>
-	fetchYouTube(url, dir, maxBytes, onStage, { strategy: 'alt' });
+const fetchYouTubeAlt = (url, dir, maxBytes, onStage, options) =>
+	fetchYouTube(url, dir, maxBytes, onStage, { ...options, strategy: 'alt' });
 
 const SUPPORTED_SITES = [
 	{
@@ -100,7 +100,7 @@ function isOnlyMediaUrls(text) {
 // Fetches a supported link into a fresh temp dir. Caller must call cleanup() when done, and can
 // log later steps (uploading) under the same job with the returned log.
 // onStage is called with 'downloading' and (if needed) 'compressing' as the work progresses.
-async function downloadMedia(url, maxBytes, onStage) {
+async function downloadMedia(url, maxBytes, onStage, options) {
 	const site = findSupportedSite(url);
 	if (!site) {
 		throw new Error(`Unsupported URL: ${url}`);
@@ -113,7 +113,7 @@ async function downloadMedia(url, maxBytes, onStage) {
 
 	try {
 		log.info(`start ${url} (upload limit ${formatMb(maxBytes)})`);
-		const result = await runInJob(job, () => site.fetch(url, dir, maxBytes, onStage));
+		const result = await runInJob(job, () => site.fetch(url, dir, maxBytes, onStage, options));
 		const sizes = await Promise.all(
 			result.files.map((file) => fs.stat(file.path).then((stat) => stat.size)),
 		);

@@ -161,7 +161,7 @@ function createFallbackChain({
 	isBusy = () => busyProbe(),
 	probe = probeVideo,
 }) {
-	return async function runChain(url, dir, maxBytes, onStage) {
+	return async function runChain(url, dir, maxBytes, onStage, options) {
 		const key = normalizeUrlKey(url);
 		if (state.isCoolingDown(key)) {
 			mediaLog.warn(`${key} failed completely a moment ago; not retrying yet`);
@@ -209,7 +209,7 @@ function createFallbackChain({
 				// The file check runs under the same budget (a stuck ffprobe is cancelled too), and a rung
 				// that only finished after the budget was spent does not count as a success.
 				const result = await runWithSignal(controller.signal, async () => {
-					const fetched = await rung.run(url, rungDir, maxBytes, onStage);
+					const fetched = await rung.run(url, rungDir, maxBytes, onStage, options);
 					// What was measured and which rung delivered it travel with the result (see botReport.js).
 					fetched.stats = await assertUsableResult(fetched, probe);
 					fetched.layer = rung.name;

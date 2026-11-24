@@ -22,7 +22,7 @@ const fakeMedia = {
 		throw new Error('no fake installed');
 	},
 	downloadMedia: (...args) => fakeMedia.impl(...args),
-	findSupportedSite: () => ({ name: 'YouTube' }),
+	findSupportedSite: (url) => ({ name: url === URL_FB ? 'Facebook' : 'YouTube' }),
 };
 require.cache[mediaPath] = { id: mediaPath, filename: mediaPath, loaded: true, exports: fakeMedia };
 require.cache[adminPath] = {
@@ -37,6 +37,7 @@ const { getFeature, resetFeatureForTests } = require('../services/botReport');
 const { EmptyFileError } = require('../services/sites/video');
 
 const URL_A = 'https://www.youtube.com/shorts/HPawwstzIU0';
+const URL_FB = 'https://www.facebook.com/reel/123456789';
 const fakeLog = { info: () => undefined, warn: () => undefined };
 
 beforeEach(() => {
@@ -152,10 +153,23 @@ test('a video too long to compress, asked for with /x: the answer shows the link
 	fakeMedia.impl = async () => {
 		throw Object.assign(new UserFacingError('影片太长，压缩后会太糊，建议直接到 Facebook 观看'), { code: 'VIDEO_TOO_LONG' });
 	};
-	const { updates, promise } = run({ logContext: { source: 'command', group_external_id: 'guild-1', user_external_id: 'user-1', user_name: 'tester' } });
+	const { updates, promise } = run({ url: URL_FB, logContext: { source: 'command', group_external_id: 'guild-1', user_external_id: 'user-1', user_name: 'tester' } });
 	assert.equal(await promise, false);
-	assert.equal(updates.at(-1).content, `-# <${URL_A}>\n⚠️ 影片太长，压缩后会太糊，建议直接到 Facebook 观看`);
+	assert.equal(updates.at(-1).content, `-# <${URL_FB}>\n⚠️ 影片太长，压缩后会太糊，建议直接到 Facebook 观看`);
 	assert.equal(updates.at(-1).components.length, 1, 'the 回报 button is still there');
+});
+
+test('a YouTube quality fallback replies with only the original link and keeps the quality reason in the log', async () => {
+	for (const code of ['VIDEO_TOO_BLURRY', 'VIDEO_TOO_LONG']) {
+		fakeMedia.impl = async () => {
+			throw Object.assign(new Error('画质太低'), { code });
+		};
+		const { updates, ids, promise } = run({ logContext: { source: 'command' } });
+		assert.equal(await promise, false);
+		assert.deepEqual(updates.at(-1), { content: `-# <${URL_A}>`, allowedMentions: { parse: [] } });
+		assert.equal(getFeature().store.findContextByMessage(ids.at(-1))?.error_code, code);
+		assert.equal(reports.at(-1).result, 'failed');
+	}
 });
 
 test('in a channel the failure line names who shared the link, like a posted result', async () => {

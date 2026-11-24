@@ -58,7 +58,7 @@ function formatText(media) {
 // Downloads one link and turns it into LINE messages (author/text plus video/image).
 // Resolves to { messages, fileCount, compressed }.
 async function buildMessagesForUrl(url) {
-	const media = await downloadMedia(url, MAX_MEDIA_BYTES);
+	const media = await downloadMedia(url, MAX_MEDIA_BYTES, undefined, { allowLowQualityYouTube: true });
 	try {
 		const messages = [{ type: 'text', text: formatText(media) }];
 		const published = await publishFiles(media.files);

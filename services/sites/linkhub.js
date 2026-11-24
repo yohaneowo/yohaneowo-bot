@@ -223,7 +223,7 @@ async function downloadItem(item, dir, index, maxBytes) {
 	return { path: filePath, name: `image-${index}.${extension}`, isVideo: false };
 }
 
-async function fetchViaLinkHub(url, dir, maxBytes, onStage) {
+async function fetchViaLinkHub(url, dir, maxBytes, onStage, { allowLowQualityYouTube } = {}) {
 	const { post, items, meta, raw } = await parse(url);
 	mediaLog.info(
 		`LinkHub: ${meta.platform} via ${meta.adapter}${meta.cached ? ' (cached)' : ''}, ${items.length} item(s)` +
@@ -250,7 +250,7 @@ async function fetchViaLinkHub(url, dir, maxBytes, onStage) {
 				maxBytes,
 				onStage,
 				file.durationSec,
-				{ allowLowBitrate: meta.platform === 'youtube' },
+				{ youtube: meta.platform === 'youtube', allowLowQualityYouTube },
 			);
 			result.files.push({
 				path: filePath,

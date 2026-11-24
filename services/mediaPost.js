@@ -80,10 +80,11 @@ function reportBusy(url, logContext) {
 // then replaces it with the post/video. `update(payload)` edits that status message.
 // Returns true once the result has been posted.
 function postMedia(options) {
-	return withLogSite(findSupportedSite(options.url)?.name, () => postMediaInSiteScope(options));
+	const site = findSupportedSite(options.url)?.name;
+	return withLogSite(site, () => postMediaInSiteScope(options, site));
 }
 
-async function postMediaInSiteScope({ url, maxBytes, sharerId, update, logContext }) {
+async function postMediaInSiteScope({ url, maxBytes, sharerId, update, logContext }, site) {
 	// Serialize edits so a slow edit can't land after a newer one.
 	let pendingEdit = Promise.resolve();
 	const setStatus = (content) => {
@@ -105,7 +106,7 @@ async function postMediaInSiteScope({ url, maxBytes, sharerId, update, logContex
 			platform: 'discord',
 			...logContext,
 			url,
-			site: findSupportedSite(url)?.name,
+			site,
 			result,
 			duration_ms: Date.now() - startedAt,
 			...extra,
@@ -124,7 +125,7 @@ async function postMediaInSiteScope({ url, maxBytes, sharerId, update, logContex
 		});
 		media.log.info('posted to Discord');
 		logResult('success', { file_count: media.files.length, compressed: Boolean(media.compressed) });
-		getFeature().recordResult({ message: sent, logContext, url, site: findSupportedSite(url)?.name, outcome: 'success', media });
+		getFeature().recordResult({ message: sent, logContext, url, site, outcome: 'success', media });
 		return true;
 	}
 	catch (error) {
@@ -135,11 +136,13 @@ async function postMediaInSiteScope({ url, maxBytes, sharerId, update, logContex
 			error_message: error.code === 'EMPTY_FILE' ? `empty_file: ${error.detail ?? error.message}` : error.message,
 		});
 		await pendingEdit;
-		const failureText = `${linkLine(url, sharerId)}\n${error.userMessage ? `⚠️ ${error.userMessage}` : '❌ 解析失败了 😢'}`;
+		const link = linkLine(url, sharerId);
+		const linkOnly = site === 'YouTube' && ['VIDEO_TOO_BLURRY', 'VIDEO_TOO_LONG'].includes(error.code);
+		const failureText = linkOnly ? link : `${link}\n${error.userMessage ? `⚠️ ${error.userMessage}` : '❌ 解析失败了 😢'}`;
 		const feature = getFeature();
-		const components = feature.failureComponents();
+		const components = linkOnly ? [] : feature.failureComponents();
 		const failed = await setStatus({ content: failureText, allowedMentions: NO_MENTIONS, ...(components.length ? { components } : {}) });
-		feature.recordResult({ message: failed, logContext, url, site: findSupportedSite(url)?.name, outcome: 'failed', error });
+		feature.recordResult({ message: failed, logContext, url, site, outcome: 'failed', error });
 		return false;
 	}
 	finally {

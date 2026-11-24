@@ -17,6 +17,7 @@ const COMPRESS_TIMEOUT_MS = 5 * 60 * 1000;
 // With a 10 MB limit that is roughly 90 seconds, with 50 MB about 7 minutes.
 const MIN_VIDEO_KBPS = 700;
 const AUDIO_KBPS = 96;
+const MIN_YOUTUBE_SHORT_SIDE = 360;
 // A real video is never this small; anything under it is an empty or truncated download.
 const MIN_VIDEO_BYTES = 10 * 1000;
 
@@ -268,7 +269,11 @@ async function compressToFit(inputPath, outputPath, durationSeconds, maxBytes, a
 // Compresses a downloaded video when it exceeds maxBytes. Duration comes from the site when
 // known, otherwise from the file itself.
 // probeFn is injectable for tests.
-async function fitVideoToLimit(filePath, dir, maxBytes, onStage, knownDuration, { probeFn = probeVideo, allowLowBitrate = false } = {}) {
+async function fitVideoToLimit(filePath, dir, maxBytes, onStage, knownDuration, {
+	probeFn = probeVideo,
+	youtube = false,
+	allowLowQualityYouTube = false,
+} = {}) {
 	const { size } = await fs.stat(filePath);
 	const probe = await probeFn(filePath);
 	assertUsableVideo(size, probe);
@@ -277,13 +282,19 @@ async function fitVideoToLimit(filePath, dir, maxBytes, onStage, knownDuration, 
 		`video ${probe?.width ?? '?'}x${probe?.height ?? '?'} ${probe?.codec ?? '?'}, ` +
 			`${duration > 0 ? `${Math.round(duration)}s` : 'unknown length'}, ${formatMb(size)}`,
 	);
+	const shortSide = Math.min(probe?.width, probe?.height);
+	if (youtube && !allowLowQualityYouTube && shortSide > 0 && shortSide < MIN_YOUTUBE_SHORT_SIDE) {
+		throw Object.assign(new UserFacingError(`影片分辨率太低（${probe.width}×${probe.height}），建议打开 YouTube 观看`), {
+			code: 'VIDEO_TOO_BLURRY',
+		});
+	}
 	if (size <= maxBytes) {
 		return { filePath, compressed: false };
 	}
 
 	onStage?.('compressing');
 	mediaLog.info(`over the ${formatMb(maxBytes)} limit, compressing`);
-	const compressedPath = await compressToFit(filePath, path.join(dir, 'compressed.mp4'), duration, maxBytes, allowLowBitrate);
+	const compressedPath = await compressToFit(filePath, path.join(dir, 'compressed.mp4'), duration, maxBytes, youtube && allowLowQualityYouTube);
 	assertUsableVideo((await fs.stat(compressedPath)).size, await probeVideo(compressedPath), 'compressed video');
 	return { filePath: compressedPath, compressed: true };
 }
@@ -306,7 +317,8 @@ async function fetchVideo(url, dir, maxBytes, onStage, options = {}) {
 	mediaLog.info(`yt-dlp downloaded format ${info.format_id}`);
 
 	const { filePath, compressed } = await fitVideoToLimit(downloadedPath, dir, maxBytes, onStage, info.duration, {
-		allowLowBitrate: Boolean(youtubeVideoId(url)),
+		youtube: Boolean(youtubeVideoId(url)),
+		allowLowQualityYouTube: options.allowLowQualityYouTube,
 	});
 
 	const uploader = info.uploader || info.creator || '';
