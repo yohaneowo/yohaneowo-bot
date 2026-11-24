@@ -20,7 +20,9 @@ const LIMIT = 12_000_000;
 	try {
 		// A 100 s clip at this limit needs ~770 kbps, above the 700 kbps floor, so ffmpeg is really started.
 		await runWithSignal(controller.signal, () =>
-			fitVideoToLimit(input, dir, LIMIT, undefined, 100, async () => ({ duration: 100, width: 1, height: 1, codec: 'h264' })),
+			fitVideoToLimit(input, dir, LIMIT, undefined, 100, {
+				probeFn: async () => ({ duration: 100, width: 1, height: 1, codec: 'h264' }),
+			}),
 		);
 		outcome = { rejected: false };
 	}

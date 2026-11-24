@@ -60,8 +60,21 @@ function buildAltFormatSelector(maxBytes) {
 	].join('/');
 }
 
-function isYouTubeUrl(url) {
-	return /^https?:\/\/(?:[\w-]+\.)?(?:youtube\.com|youtu\.be)\//i.test(url);
+function youtubeVideoId(url) {
+	const parsed = URL.parse(url);
+	if (!parsed || !['https:', 'http:'].includes(parsed.protocol) || parsed.username || parsed.password || parsed.port) {
+		return null;
+	}
+	let id;
+	if (['youtu.be', 'www.youtu.be'].includes(parsed.hostname)) {
+		id = parsed.pathname.match(/^\/([\w-]{11})\/?$/)?.[1];
+	}
+	else if (['youtube.com', 'www.youtube.com', 'm.youtube.com'].includes(parsed.hostname)) {
+		id = parsed.pathname === '/watch'
+			? parsed.searchParams.get('v')
+			: parsed.pathname.match(/^\/shorts\/([\w-]{11})\/?$/)?.[1];
+	}
+	return /^[\w-]{11}$/.test(id) ? id : null;
 }
 
 // strategy: 'default' or 'alt' (the retry rung).
@@ -78,7 +91,7 @@ function buildYtDlpArgs({ url, dir, maxBytes, strategy = 'default' }) {
 		// YouTube needs a JS runtime; reuse the Node binary running this bot.
 		'--js-runtimes', `node:${process.execPath}`,
 	];
-	if (alt && isYouTubeUrl(url)) args.push('--extractor-args', `youtube:player_client=${ALT_YOUTUBE_CLIENT}`);
+	if (alt && youtubeVideoId(url)) args.push('--extractor-args', `youtube:player_client=${ALT_YOUTUBE_CLIENT}`);
 	if (process.env.FFMPEG_PATH) args.push('--ffmpeg-location', FFMPEG_PATH);
 	args.push('-o', path.join(dir, 'video.%(ext)s'), '--', url);
 	return args;
@@ -195,35 +208,45 @@ function assertUsableVideo(size, probe, label = 'video') {
 	}
 }
 
-async function compressToFit(inputPath, outputPath, durationSeconds, maxBytes) {
+async function compressToFit(inputPath, outputPath, durationSeconds, maxBytes, allowLowBitrate) {
 	if (!(durationSeconds > 0)) {
 		throw new Error('Video is too large and its duration is unknown, cannot compress');
 	}
 
-	let videoKbps = Math.floor((maxBytes * 8 * 0.9) / durationSeconds / 1000) - AUDIO_KBPS;
+	const totalKbps = Math.floor((maxBytes * 8 * 0.9) / durationSeconds / 1000);
+	const audioKbps = allowLowBitrate ? Math.min(AUDIO_KBPS, Math.max(8, Math.floor(totalKbps / 3))) : AUDIO_KBPS;
+	const minVideoKbps = allowLowBitrate ? 1 : MIN_VIDEO_KBPS;
+	let videoKbps = totalKbps - audioKbps;
 
 	// The encoder can overshoot the target bitrate, so retry with a proportionally lower one.
 	for (let attempt = 0; attempt < 3; attempt++) {
-		if (videoKbps < MIN_VIDEO_KBPS) {
-			mediaLog.warn(`would need ${videoKbps} kbps for ${Math.round(durationSeconds)}s (minimum ${MIN_VIDEO_KBPS}), skipping`);
+		if (videoKbps < minVideoKbps) {
+			mediaLog.warn(`would need ${videoKbps} kbps for ${Math.round(durationSeconds)}s (minimum ${minVideoKbps}), skipping`);
+			if (allowLowBitrate) throw new UserFacingError('影片无法压到此处的上传上限，建议直接到 YouTube 观看');
 			// media.js rewrites this with the site name ("建议直接到 TikTok 观看").
 			throw Object.assign(new UserFacingError('影片太长，压缩后会太糊，建议直接到原网站观看'), {
 				code: 'VIDEO_TOO_LONG',
 			});
 		}
 
+		// At low bitrates, encode fewer pixels so a long video has a chance to fit.
+		const side = videoKbps < 150 ? 240 : videoKbps < 350 ? 360 : 480;
+		const scale = allowLowBitrate && videoKbps < MIN_VIDEO_KBPS
+			? ['-vf', `scale=w='min(iw,${side})':h='min(ih,${side})':force_original_aspect_ratio=decrease:force_divisible_by=2`]
+			: [];
 		await execFileAsync(
 			FFMPEG_PATH,
 			[
 				'-y',
 				'-i', inputPath,
+				...scale,
 				'-c:v', 'libx264',
 				'-preset', 'veryfast',
 				'-b:v', `${videoKbps}k`,
 				'-maxrate', `${videoKbps}k`,
 				'-bufsize', `${videoKbps * 2}k`,
 				'-c:a', 'aac',
-				'-b:a', `${AUDIO_KBPS}k`,
+				'-b:a', `${audioKbps}k`,
 				'-movflags', '+faststart',
 				outputPath,
 			],
@@ -238,13 +261,14 @@ async function compressToFit(inputPath, outputPath, durationSeconds, maxBytes) {
 		videoKbps = Math.floor(videoKbps * (maxBytes / size) * 0.9);
 	}
 
+	if (allowLowBitrate) throw new UserFacingError('影片压缩后仍超过上传上限，建议直接到 YouTube 观看');
 	throw new Error('Compressed video still exceeds the Discord upload limit');
 }
 
 // Compresses a downloaded video when it exceeds maxBytes. Duration comes from the site when
 // known, otherwise from the file itself.
-// probe is injectable for tests.
-async function fitVideoToLimit(filePath, dir, maxBytes, onStage, knownDuration, probeFn = probeVideo) {
+// probeFn is injectable for tests.
+async function fitVideoToLimit(filePath, dir, maxBytes, onStage, knownDuration, { probeFn = probeVideo, allowLowBitrate = false } = {}) {
 	const { size } = await fs.stat(filePath);
 	const probe = await probeFn(filePath);
 	assertUsableVideo(size, probe);
@@ -259,7 +283,7 @@ async function fitVideoToLimit(filePath, dir, maxBytes, onStage, knownDuration, 
 
 	onStage?.('compressing');
 	mediaLog.info(`over the ${formatMb(maxBytes)} limit, compressing`);
-	const compressedPath = await compressToFit(filePath, path.join(dir, 'compressed.mp4'), duration, maxBytes);
+	const compressedPath = await compressToFit(filePath, path.join(dir, 'compressed.mp4'), duration, maxBytes, allowLowBitrate);
 	assertUsableVideo((await fs.stat(compressedPath)).size, await probeVideo(compressedPath), 'compressed video');
 	return { filePath: compressedPath, compressed: true };
 }
@@ -281,7 +305,9 @@ async function fetchVideo(url, dir, maxBytes, onStage, options = {}) {
 	const downloadedPath = await findDownloadedFile(dir);
 	mediaLog.info(`yt-dlp downloaded format ${info.format_id}`);
 
-	const { filePath, compressed } = await fitVideoToLimit(downloadedPath, dir, maxBytes, onStage, info.duration);
+	const { filePath, compressed } = await fitVideoToLimit(downloadedPath, dir, maxBytes, onStage, info.duration, {
+		allowLowBitrate: Boolean(youtubeVideoId(url)),
+	});
 
 	const uploader = info.uploader || info.creator || '';
 	return {
@@ -310,4 +336,5 @@ module.exports = {
 	assertUsableVideo,
 	buildYtDlpArgs,
 	buildAltFormatSelector,
+	youtubeVideoId,
 };

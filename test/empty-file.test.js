@@ -34,7 +34,7 @@ test('0-byte file is rejected as empty_file with a user message', async () => {
 	const file = path.join(dir, 'video.mp4');
 	fs.writeFileSync(file, '');
 	await assert.rejects(
-		() => fitVideoToLimit(file, dir, LIMIT, undefined, undefined, fakeProbe),
+		() => fitVideoToLimit(file, dir, LIMIT, undefined, undefined, { probeFn: fakeProbe }),
 		(error) => {
 			assert.ok(error instanceof EmptyFileError);
 			assert.ok(error instanceof UserFacingError);
@@ -48,33 +48,33 @@ test('0-byte file is rejected as empty_file with a user message', async () => {
 test('one byte under the minimum is rejected', async () => {
 	const file = writeFile('video.mp4', MIN_VIDEO_BYTES - 1);
 	await assert.rejects(
-		() => fitVideoToLimit(file, dir, LIMIT, undefined, undefined, fakeProbe),
+		() => fitVideoToLimit(file, dir, LIMIT, undefined, undefined, { probeFn: fakeProbe }),
 		{ code: 'EMPTY_FILE' },
 	);
 });
 
 test('exactly the minimum size passes', async () => {
 	const file = writeFile('video.mp4', MIN_VIDEO_BYTES);
-	const result = await fitVideoToLimit(file, dir, LIMIT, undefined, undefined, fakeProbe);
+	const result = await fitVideoToLimit(file, dir, LIMIT, undefined, undefined, { probeFn: fakeProbe });
 	assert.deepEqual(result, { filePath: file, compressed: false });
 });
 
 test('a normal file passes', async () => {
 	const file = writeFile('video.mp4', 500 * 1000);
-	const result = await fitVideoToLimit(file, dir, LIMIT, undefined, undefined, fakeProbe);
+	const result = await fitVideoToLimit(file, dir, LIMIT, undefined, undefined, { probeFn: fakeProbe });
 	assert.deepEqual(result, { filePath: file, compressed: false });
 });
 
 test('a big file ffprobe cannot read is rejected even if the site reported a duration', async () => {
 	const file = writeFile('video.mp4', 500 * 1000, 'GARBAGE');
 	await assert.rejects(
-		() => fitVideoToLimit(file, dir, LIMIT, undefined, 30, fakeProbe),
+		() => fitVideoToLimit(file, dir, LIMIT, undefined, 30, { probeFn: fakeProbe }),
 		{ code: 'EMPTY_FILE' },
 	);
 });
 
 test('a missing ffprobe binary does not reject a normal-size file', async () => {
 	const file = writeFile('video.mp4', 500 * 1000);
-	const result = await fitVideoToLimit(file, dir, LIMIT, undefined, 30, async () => ({ unavailable: true }));
+	const result = await fitVideoToLimit(file, dir, LIMIT, undefined, 30, { probeFn: async () => ({ unavailable: true }) });
 	assert.equal(result.filePath, file);
 });

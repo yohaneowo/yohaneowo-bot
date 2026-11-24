@@ -13,14 +13,14 @@
   | Facebook | 公开贴文的作者、内文和第一张图 | 链接预览资料，不需要登录 |
   | Instagram | 公开的 reel 和影片贴文下载影片；受限内容只显示封面、作者和内文 | 先用 yt-dlp，失败时改用链接预览资料 |
   | 小红书 | 影片笔记（720p，超过上限就压缩）；图文笔记回复"暂未开放" | [XHS-Downloader](https://github.com/JoeanAmier/XHS-Downloader) 的 API |
-  | YouTube | 只支持 Shorts（`youtube.com/shorts/…`），影像和声音分开下载再合并，最高 1080p | yt-dlp（用 Node 作为 JS 执行环境） |
+  | YouTube | 支持普通影片、Shorts 和 `youtu.be` 分享链接。需要时合并影像和声音，超过 Discord 上传上限时自动压缩 | LinkHub，失败时改用 yt-dlp（用 Node 作为 JS 执行环境） |
   | B站 | 影片（`bilibili.com/video/…` 与 `b23.tv` 短链；分 P 影片按链接的 `?p=`），超过上限就压缩 | LinkHub（Douyin_TikTok_Download_API v5，走 B 站的 WBI 新接口）；LinkHub 失败时改用 yt-dlp |
   | Threads | 文字、图片、影片、多图贴文（最多 10 个），引用贴文会显示被引用的影片和图片 | Threads 网页自己用的 GraphQL 接口，不需要登录 |
   | X（Twitter） | 文字、图片（原图）、影片（选上限内最高画质）、多媒体贴文（最多 4 个），引用贴文会显示被引用的媒体；敏感内容以 Spoiler 发送。也接受 fxtwitter / vxtwitter / fixupx 链接 | X 嵌入推文用的 syndication 接口，不需要登录；拿不到时改用 yt-dlp |
 
   Threads 没有 yt-dlp 解析器，bot 直接调用 Threads 网页使用的接口（做法参考 [vxThreads](https://github.com/everettsouthwick/vxThreads)）。接口需要的查询 ID 和参数会随着 Threads 更新而改变，所以 bot 会从 Threads 的网页脚本中自动读取（贴文页引用的脚本，加上路由定义接口列出的脚本——2026 年 10 月起查询只在后者里），缓存 12 小时，查询失败时重新读取。
 
-  需要压缩的影片，如果压缩后的视频码率会低于 700 kbps（10 MB 上限下大约 90 秒），就不发送，改为回复"影片太长，建议直接到原网站观看"。原片本来就在上限以内的影片不受影响。
+  YouTube 影片按压缩后的实际文件大小判断能否上传，默认上传上限是 10 MB。码率较低时会降低分辨率。其他站点的影片需要压缩时，仍使用 700 kbps 的最低视频码率。原片本来就在上限内时直接上传。
 
   Facebook 的限制：拿不到影片文件（影片贴文只能显示封面），多图贴文只能拿到第一张，私人或仅好友可见的贴文会解析失败。
 

@@ -250,6 +250,7 @@ async function fetchViaLinkHub(url, dir, maxBytes, onStage) {
 				maxBytes,
 				onStage,
 				file.durationSec,
+				{ allowLowBitrate: meta.platform === 'youtube' },
 			);
 			result.files.push({
 				path: filePath,

@@ -1,11 +1,11 @@
 const fs = require('node:fs/promises');
 const os = require('node:os');
 const path = require('node:path');
-const { fetchVideo, EmptyFileError } = require('./sites/video');
+const { fetchVideo, EmptyFileError, youtubeVideoId } = require('./sites/video');
 const { fetchFacebookVideo, fetchFacebookPreview } = require('./sites/facebook');
 const { fetchInstagramPost } = require('./sites/instagram');
 const { fetchXiaohongshuNote } = require('./sites/xiaohongshu');
-const { fetchYouTubeShort } = require('./sites/youtube');
+const { fetchYouTube } = require('./sites/youtube');
 const { fetchThreadsPost } = require('./sites/threads');
 const { fetchXPost } = require('./sites/x');
 const { withFallbackChain } = require('./sites/chain');
@@ -19,8 +19,8 @@ const { createJob, jobLogger, runInJob, formatMb } = require('./mediaLog');
 // returns { files, author, text, compressed, note? } — note is an optional line shown under the post.
 const fetchVideoAlt = (url, dir, maxBytes, onStage) =>
 	fetchVideo(url, dir, maxBytes, onStage, { strategy: 'alt' });
-const fetchYouTubeShortAlt = (url, dir, maxBytes, onStage) =>
-	fetchYouTubeShort(url, dir, maxBytes, onStage, { strategy: 'alt' });
+const fetchYouTubeAlt = (url, dir, maxBytes, onStage) =>
+	fetchYouTube(url, dir, maxBytes, onStage, { strategy: 'alt' });
 
 const SUPPORTED_SITES = [
 	{
@@ -51,9 +51,8 @@ const SUPPORTED_SITES = [
 	},
 	{
 		name: 'YouTube',
-		// Shorts only; regular videos are too long to post.
-		pattern: /^https?:\/\/(?:(?:www|m)\.)?youtube\.com\/shorts\/[\w-]{11}/i,
-		fetch: withFallbackChain(fetchYouTubeShort, { site: 'YouTube', alt: fetchYouTubeShortAlt }),
+		matches: (url) => Boolean(youtubeVideoId(url)),
+		fetch: withFallbackChain(fetchYouTube, { site: 'YouTube', alt: fetchYouTubeAlt }),
 	},
 	{
 		name: 'B站',
@@ -80,7 +79,7 @@ const SUPPORTED_SITES = [
 const URL_TOKEN_PATTERN = /https?:\/\/[^\s<>]+/gi;
 
 function findSupportedSite(url) {
-	return SUPPORTED_SITES.find((site) => site.pattern.test(url)) ?? null;
+	return SUPPORTED_SITES.find((site) => site.matches?.(url) ?? site.pattern.test(url)) ?? null;
 }
 
 function extractMediaUrls(text) {

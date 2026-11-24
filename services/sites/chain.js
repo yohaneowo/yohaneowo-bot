@@ -1,7 +1,7 @@
 const fs = require('node:fs/promises');
 const path = require('node:path');
 const { UserFacingError } = require('./errors');
-const { EmptyFileError, probeVideo } = require('./video');
+const { EmptyFileError, probeVideo, youtubeVideoId } = require('./video');
 const { DeadlineError, runWithSignal } = require('./deadline');
 const linkhub = require('./linkhub');
 const { mediaLog } = require('../mediaLog');
@@ -35,11 +35,12 @@ const COOLDOWN_MAX_ENTRIES = 200;
 const IDENTITY_PARAMS = ['v', 'p', 'id', 'story_fbid'];
 
 function normalizeUrlKey(url) {
+	const youtubeId = youtubeVideoId(url);
+	if (youtubeId) return `youtube:${youtubeId}`;
+
 	try {
 		const parsed = new URL(url);
 		const host = parsed.hostname.toLowerCase().replace(/^(?:www|m|mobile)\./, '');
-		const short = parsed.pathname.match(/^\/shorts\/([\w-]{11})/);
-		if (host === 'youtube.com' && short) return `youtube:${short[1]}`;
 		const query = IDENTITY_PARAMS.filter((name) => parsed.searchParams.has(name))
 			.map((name) => `${name}=${parsed.searchParams.get(name)}`)
 			.join('&');

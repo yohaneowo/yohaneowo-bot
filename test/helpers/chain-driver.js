@@ -4,11 +4,11 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const { withFallbackChain } = require('../../services/sites/chain');
-const { fetchYouTubeShort } = require('../../services/sites/youtube');
+const { fetchYouTube } = require('../../services/sites/youtube');
 
-const chain = withFallbackChain(fetchYouTubeShort, {
+const chain = withFallbackChain(fetchYouTube, {
 	site: 'YouTube',
-	alt: (url, dir, maxBytes, onStage) => fetchYouTubeShort(url, dir, maxBytes, onStage, { strategy: 'alt' }),
+	alt: (url, dir, maxBytes, onStage) => fetchYouTube(url, dir, maxBytes, onStage, { strategy: 'alt' }),
 });
 
 (async () => {
